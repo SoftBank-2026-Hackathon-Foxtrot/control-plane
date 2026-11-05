@@ -1,5 +1,9 @@
 # control-plane
 
+![control-plane 아키텍처](docs/architecture.png)
+
+> 파란 선은 제어 명령, 회색 선은 상태·근거·트래픽입니다. 양방향 화살표는 앱의 heartbeat와 플랫폼의 업무 검사입니다. [인터랙티브 버전](https://claude.ai/artifact/QMfrqiTnyDfViBgicQxv9i)
+
 Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)와 Cloudflare 가중치를 정해진 순서로 제어하고, 콘솔에 진행 상황과 제어 수단을 제공합니다.
 
 - 설계: [플랫폼 백엔드 설계 초안](https://app.notion.com/p/40f8bee9ada48174b929d433081f41b6)
