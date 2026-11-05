@@ -1,0 +1,66 @@
+[project]
+name = "control-plane"
+version = "0.1.0"
+description = "Foxtrot platform backend: migration orchestrator and console API"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "boto3>=1.40,<2",
+  "fastapi>=0.115,<1",
+  "httpx>=0.27,<1",
+  "pydantic>=2.9,<3",
+  "pydantic-settings>=2.6,<3",
+  "pyyaml>=6,<7",
+  "uvicorn>=0.32,<1",
+]
+
+[project.scripts]
+control-plane = "control_plane.main:run"
+
+[dependency-groups]
+dev = [
+  "jsonschema>=4.23,<5",
+  "moto[dynamodb]>=5,<6",
+  "mypy>=1.13,<2",
+  "pytest>=8.3,<10",
+  "pytest-asyncio>=0.24,<2",
+  "ruff>=0.9,<1",
+  "types-pyyaml>=6,<7",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/control_plane"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Header", "fastapi.Query", "fastapi.Cookie"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "botocore.*", "db_operator.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: drives a real migration adapter; needs Go and the adapter checkout",
+]
