@@ -18,9 +18,12 @@ PLAN: tuple[StageDefinition, ...] = (
     StageDefinition(StageKind.SYNC),
     StageDefinition(StageKind.OBJECT_CUTOVER),
     StageDefinition(StageKind.CANARY),
-    # Target writes cannot be undone with the DMS profile, so a person starts this stage.
-    StageDefinition(StageKind.DATABASE_CUTOVER, requires_approval=True),
-    StageDefinition(StageKind.REDIS_CUTOVER),
+    # One approval starts Redis and then the DB. Target writes to the DB cannot be undone with the
+    # DMS profile, so a person decides before either moves. Redis goes first: it can still go back,
+    # and if it fails the DB is untouched and everything returns to the source. Asking again
+    # between the two would leave the stores split across clouds while a person is away.
+    StageDefinition(StageKind.REDIS_CUTOVER, requires_approval=True),
+    StageDefinition(StageKind.DATABASE_CUTOVER),
     StageDefinition(StageKind.TRAFFIC),
     # FINALIZE removes the way back.
     StageDefinition(StageKind.FINALIZE, requires_approval=True),
@@ -43,15 +46,15 @@ ALLOWED_ROUTES_BEFORE: dict[StageKind, dict[ResourceKind, frozenset[str]]] = {
         ResourceKind.DATABASE: SOURCE,
         ResourceKind.REDIS: SOURCE,
     },
-    StageKind.DATABASE_CUTOVER: {
+    StageKind.REDIS_CUTOVER: {
         ResourceKind.OBJECT_STORAGE: OBJECT_MOVED,
         ResourceKind.DATABASE: SOURCE,
         ResourceKind.REDIS: SOURCE,
     },
-    StageKind.REDIS_CUTOVER: {
+    StageKind.DATABASE_CUTOVER: {
         ResourceKind.OBJECT_STORAGE: OBJECT_MOVED,
-        ResourceKind.DATABASE: TARGET,
-        ResourceKind.REDIS: SOURCE,
+        ResourceKind.DATABASE: SOURCE,
+        ResourceKind.REDIS: TARGET,
     },
     StageKind.TRAFFIC: {
         ResourceKind.OBJECT_STORAGE: OBJECT_MOVED,

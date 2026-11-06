@@ -172,3 +172,7 @@ docker build --secret id=github_token,env=GITHUB_TOKEN --build-arg DB_OPERATOR_R
 - **RUNNING 근거를 단계 밖에서 유지:** DB 어댑터는 `readiness.advance`뿐 아니라 FINALIZE 시점에도 30초 이내의 근거와 30초 안정 구간을 요구합니다. 그래서 `RunningEvidence`가 DB 전환 후 FINALIZE까지 계속 기록합니다.
 - **중단 조건 강화:** 전환이 진행 중인 리소스가 있으면 ABORT를 거절하고 업무 정지를 유지합니다. 멈춘 프록시 앞에서 앱을 재개하는 사고를 막기 위해서입니다.
 - **Redis failure 복귀 조건:** 대상을 직접 볼 권한이 없으므로 사람의 확인과 최신 업무 검사 실패를 함께 요구합니다.
+- **Redis를 DB보다 먼저 전환:** 설계의 4단계 DB, 5단계 Redis를 4단계 Redis, 5단계 DB로 바꿨습니다. 승인은 4단계 앞에서 한 번 받고, Redis가 끝나면 DB가 바로 이어집니다.
+  - 순서를 바꾼 이유: Redis 전환이 실패해도 DB는 원본에 그대로 있으므로, Redis만 되돌리면 모든 리소스가 원본으로 돌아갑니다. 이전 순서에서는 DB가 이미 대상에 쓰기 시작한 뒤라 섞인 상태로 멈췄습니다.
+  - 승인을 Redis 앞으로 옮긴 이유: 두 전환 사이에 승인을 기다리면, 그동안 DB와 Redis가 서로 다른 클라우드에 있는 구간이 길어집니다.
+  - 근거 정리: [동기화 시 병렬 vs 직렬](https://app.notion.com/p/40f8bee9ada48011a87cf7d442ca2ebb)

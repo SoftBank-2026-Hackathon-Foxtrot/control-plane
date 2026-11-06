@@ -6,7 +6,7 @@ import pytest
 
 from control_plane.domain.models import ResourceKind, WorkflowStatus
 from control_plane.errors import ApiError
-from tests.conftest import World
+from tests.conftest import DB_STAGE, REDIS_STAGE, TRAFFIC_STAGE, World
 from tests.fakes import Fault
 
 
@@ -42,7 +42,7 @@ async def test_after_a_rollback_the_same_plan_cannot_go_on(world: World) -> None
 
 async def test_redis_rollback_carries_the_mode_and_the_object_one_does_not(world: World) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 6)
+    await world.at_stage(workflow.id, TRAFFIC_STAGE)
     await world.command(workflow.id, "HALT")
     await world.command(workflow.id, "ROLLBACK_RESOURCE", resource=ResourceKind.REDIS)
     final = await world.until(workflow.id, WorkflowStatus.HALTED)
@@ -53,9 +53,26 @@ async def test_redis_rollback_carries_the_mode_and_the_object_one_does_not(world
     assert world.redis.only.lifecycle == "RESTORED"
 
 
+async def test_redis_going_back_before_the_database_moves_leaves_nothing_on_the_target(
+    world: World,
+) -> None:
+    """Why Redis moves first: if it has to go back, the DB was never touched."""
+    workflow = await world.start()
+    await world.at_stage(workflow.id, DB_STAGE)
+    await world.command(workflow.id, "HALT")
+    await world.command(workflow.id, "ROLLBACK_RESOURCE", resource=ResourceKind.REDIS)
+    final = await world.until(workflow.id, WorkflowStatus.HALTED)
+
+    assert final.halt is not None and final.halt.code == "ROLLBACK_COMPLETED", final.halt
+    assert world.redis.only.lifecycle == "RESTORED"
+    assert world.db.only.lifecycle == "READY"
+    assert "QUIESCE" not in [body["action"] for body in world.db.received]
+    assert (await world.services.coordinator.hold()).desired.value == "RUN"
+
+
 async def test_database_cannot_return_after_target_writes(world: World) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 5)
+    await world.at_stage(workflow.id, DB_STAGE + 1)  # the database has moved
     await world.command(workflow.id, "HALT")
     await world.command(workflow.id, "ROLLBACK_RESOURCE", resource=ResourceKind.DATABASE)
     final = await world.until(workflow.id, WorkflowStatus.HALTED)
@@ -70,7 +87,7 @@ async def test_database_rollback_before_target_writes_stops_the_workload_again(
 ) -> None:
     world.db.faults["RESUME"] = Fault("FAILED", code="TARGET_NOT_READY")
     workflow = await world.start()
-    await world.at_stage(workflow.id, 4)
+    await world.at_stage(workflow.id, DB_STAGE)
     halted = await world.run_to_end(workflow.id)
     assert halted.halt is not None and halted.halt.code == "TARGET_NOT_READY"
     assert world.db.only.lifecycle == "SWITCHED"
@@ -90,7 +107,7 @@ async def test_database_rollback_before_target_writes_stops_the_workload_again(
 
 async def test_failure_mode_needs_a_failing_target_and_a_person(world: World) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 6)
+    await world.at_stage(workflow.id, TRAFFIC_STAGE)
     await world.command(workflow.id, "HALT")
 
     with pytest.raises(ApiError) as refused:
@@ -171,7 +188,7 @@ async def test_abort_refuses_to_walk_away_from_a_paused_database(world: World) -
     """A failed QUIESCE may have paused the proxy. Apps let loose on that would be an outage."""
     world.db.faults["QUIESCE"] = Fault("FAILED")
     workflow = await world.start()
-    await world.at_stage(workflow.id, 4)
+    await world.at_stage(workflow.id, DB_STAGE)
     halted = await world.run_to_end(workflow.id)
     assert halted.halt is not None and "WORKLOAD_HELD" in halted.halt.blockers
     for _ in range(10):
@@ -187,7 +204,7 @@ async def test_abort_refuses_to_walk_away_from_a_paused_database(world: World) -
 
 async def test_abort_returns_users_to_the_source_if_the_data_is_there(world: World) -> None:
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=4)
+    await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
     assert world.traffic.current == 5
     await world.command(workflow.id, "ABORT")
     await world.until(workflow.id, WorkflowStatus.ABORTED)
@@ -196,7 +213,7 @@ async def test_abort_returns_users_to_the_source_if_the_data_is_there(world: Wor
 
 async def test_abort_leaves_traffic_if_the_data_moved(world: World) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 5)
+    await world.at_stage(workflow.id, DB_STAGE)  # Redis has moved
     assert world.traffic.current == 5
     await world.command(workflow.id, "HALT")
     await world.command(workflow.id, "ABORT")
@@ -235,7 +252,7 @@ async def test_a_rollback_timed_out_once_gets_its_full_time_again(world: World) 
 async def test_rollback_that_cannot_hold_the_workload_lets_it_run(world: World) -> None:
     world.db.faults["RESUME"] = Fault("FAILED", code="TARGET_NOT_READY")
     workflow = await world.start()
-    await world.at_stage(workflow.id, 4)
+    await world.at_stage(workflow.id, DB_STAGE)
     await world.run_to_end(workflow.id)
     for _ in range(10):
         await world.tick()

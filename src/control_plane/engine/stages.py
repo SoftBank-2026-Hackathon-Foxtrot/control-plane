@@ -21,7 +21,7 @@ from control_plane.engine.transition import held_command, hold_workload, release
 from control_plane.probes import p95
 from control_plane.traffic import TrafficError
 
-CUTOVER_ORDER = (ResourceKind.OBJECT_STORAGE, ResourceKind.DATABASE, ResourceKind.REDIS)
+CUTOVER_ORDER = (ResourceKind.OBJECT_STORAGE, ResourceKind.REDIS, ResourceKind.DATABASE)
 
 
 class StageHandler(Protocol):

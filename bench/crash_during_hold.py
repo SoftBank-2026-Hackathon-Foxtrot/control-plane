@@ -31,12 +31,6 @@ async def one_run(rng: random.Random, restart_delay: float) -> dict[str, object]
     world = _with_clock(clock)
     workflow = await world.start()
     await world.at_stage(workflow.id, DB_STAGE)
-    for _ in range(50):
-        current = await world.workflow(workflow.id)
-        if current.status is WorkflowStatus.WAITING_APPROVAL:
-            await world.approve(workflow.id)
-            break
-        await world.tick()
 
     clock.go_live()
     stop = asyncio.Event()

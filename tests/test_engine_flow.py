@@ -10,7 +10,7 @@ from control_plane.domain.models import (
     WorkflowStatus,
 )
 from control_plane.store.repository import Repository
-from tests.conftest import World
+from tests.conftest import DB_STAGE, FINALIZE_STAGE, REDIS_STAGE, World
 
 
 def actions(world: World, kind: ResourceKind) -> list[str]:
@@ -41,21 +41,21 @@ async def test_a_migration_completes_in_the_planned_order(world: World) -> None:
     ]
     assert [event.resource for event in moved] == [
         ResourceKind.OBJECT_STORAGE,
-        ResourceKind.DATABASE,
         ResourceKind.REDIS,
+        ResourceKind.DATABASE,
     ]
 
 
 async def test_cutover_never_overlaps(world: World) -> None:
     """One resource moves at a time: the next QUIESCE waits for the previous advance."""
     workflow = await world.start()
-    await world.at_stage(workflow.id, 4)
+    await world.at_stage(workflow.id, REDIS_STAGE)
     assert world.object.only.lifecycle == "ACTIVE"
+    assert world.redis.only.lifecycle == "READY"
     assert world.db.only.lifecycle == "READY"
-    assert world.redis.only.lifecycle == "READY"
-    await world.at_stage(workflow.id, 5)
-    assert world.db.only.lifecycle == "ACTIVE"
-    assert world.redis.only.lifecycle == "READY"
+    await world.at_stage(workflow.id, DB_STAGE)
+    assert world.redis.only.lifecycle == "ACTIVE"
+    assert world.db.only.lifecycle == "READY"
 
 
 async def test_each_stage_that_cannot_be_undone_waits_for_a_person(world: World) -> None:
@@ -67,12 +67,13 @@ async def test_each_stage_that_cannot_be_undone_waits_for_a_person(world: World)
 
     await world.approve(workflow.id)
     stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
-    assert stopped.current_stage == 4, "the DB cutover needs its own approval"
+    assert stopped.current_stage == REDIS_STAGE, "one approval starts the Redis and DB cutovers"
+    assert "QUIESCE" not in actions(world, ResourceKind.REDIS)
     assert "QUIESCE" not in actions(world, ResourceKind.DATABASE)
 
     await world.approve(workflow.id)
     stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
-    assert stopped.current_stage == 7, "FINALIZE removes the way back"
+    assert stopped.current_stage == FINALIZE_STAGE, "FINALIZE removes the way back"
     assert "FINALIZE" not in actions(world, ResourceKind.REDIS)
 
 
@@ -92,7 +93,7 @@ async def test_only_the_database_cutover_stops_the_workload(world: World) -> Non
         if hold.desired is HoldDesired.HOLD:
             held_during.add((await world.workflow(workflow.id)).current_stage)
 
-    assert held_during == {4}
+    assert held_during == {DB_STAGE}
     assert (await world.services.coordinator.hold()).desired is HoldDesired.RUN
 
 

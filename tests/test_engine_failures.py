@@ -6,7 +6,7 @@ import pytest
 
 from control_plane.domain.models import ResourceKind, StageKind, StageStatus, WorkflowStatus
 from control_plane.store.table import VersionConflict
-from tests.conftest import World
+from tests.conftest import CANARY_STAGE, DB_STAGE, FINALIZE_STAGE, REDIS_STAGE, TRAFFIC_STAGE, World
 from tests.fakes import Fault
 
 
@@ -177,7 +177,7 @@ async def test_a_workload_that_will_not_stop_blocks_the_cutover_and_is_released(
     world: World,
 ) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 4)
+    await world.at_stage(workflow.id, DB_STAGE)
     world.workload.stuck.add("goods-gcp-worker")
     final = await world.run_to_end(workflow.id)
 
@@ -195,9 +195,9 @@ async def test_a_workload_that_will_not_stop_blocks_the_cutover_and_is_released(
 async def test_a_workload_that_stops_reporting_mid_cutover_blocks_it(world: World) -> None:
     world.db.faults["QUIESCE"] = Fault("STUCK")
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=4)
+    await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
     await world.approve(workflow.id)
-    for _ in range(60):
+    for _ in range(600):  # Redis moves first
         await world.tick()
         if "QUIESCE" in [body["action"] for body in world.db.received]:
             break
@@ -221,7 +221,7 @@ async def test_canary_failure_returns_traffic_by_itself(world: World) -> None:
 
     world.prober.light_ok["gcp"] = True
     await world.command(workflow.id, "RESUME")
-    await world.at_stage(workflow.id, 4)
+    await world.at_stage(workflow.id, CANARY_STAGE + 1)
     assert world.traffic.history == [5, 0, 5]
 
 
@@ -236,7 +236,7 @@ async def test_slow_target_fails_the_gate(world: World) -> None:
 
 async def test_a_failed_step_later_returns_only_to_the_step_before(world: World) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 6)
+    await world.at_stage(workflow.id, TRAFFIC_STAGE)
     for _ in range(5):
         await world.tick()
     assert world.traffic.current == 25
@@ -247,7 +247,7 @@ async def test_a_failed_step_later_returns_only_to_the_step_before(world: World)
     await world.until(workflow.id, WorkflowStatus.HALTED)
     assert world.traffic.current == 25
     stages = await world.repo.stages(workflow.id)
-    assert stages[6].kind is StageKind.TRAFFIC
+    assert stages[TRAFFIC_STAGE].kind is StageKind.TRAFFIC
 
 
 async def test_a_refused_weight_change_stops_after_retrying(world: World) -> None:
@@ -277,7 +277,8 @@ async def test_halting_during_a_command_loses_nothing(world: World) -> None:
 async def test_resuming_a_long_command_does_not_stop_it_at_once(world: World) -> None:
     world.redis.faults["QUIESCE"] = Fault("STUCK")
     workflow = await world.start()
-    await world.at_stage(workflow.id, 5)
+    await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
+    await world.approve(workflow.id)
     for _ in range(5):
         await world.tick()
     await world.command(workflow.id, "HALT")
@@ -312,7 +313,7 @@ async def test_finalize_waits_out_the_retention_period(world: World) -> None:
 async def test_running_evidence_continues_until_finalize(world: World) -> None:
     """The DB adapter checks it again at FINALIZE, stages after the database moved."""
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=7)
+    await world.run_until_approval(workflow.id, stage=FINALIZE_STAGE)
     written = len(world.gate.running)
     for _ in range(120):  # a person takes two minutes to approve
         await world.tick()
@@ -323,7 +324,7 @@ async def test_running_evidence_continues_until_finalize(world: World) -> None:
 
 async def test_finalize_is_refused_if_the_workload_stopped_reporting(world: World) -> None:
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=7)
+    await world.run_until_approval(workflow.id, stage=FINALIZE_STAGE)
     world.workload.silent = True
     for _ in range(40):
         await world.tick()
@@ -334,7 +335,7 @@ async def test_finalize_is_refused_if_the_workload_stopped_reporting(world: Worl
 
 async def test_running_evidence_claims_only_what_is_reported(world: World) -> None:
     workflow = await world.start()
-    await world.at_stage(workflow.id, 5)
+    await world.at_stage(workflow.id, DB_STAGE + 1)  # the database has moved
     written = len(world.gate.running)
     world.workload.processes = world.workload.processes[:-1]
     world.clock.advance(world.seed.timings.instance_ttl + 1)

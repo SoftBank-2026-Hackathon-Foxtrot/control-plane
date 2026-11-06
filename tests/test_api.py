@@ -247,8 +247,8 @@ async def test_creating_a_workflow_returns_the_whole_picture(console: Console) -
         "SYNC",
         "OBJECT_CUTOVER",
         "CANARY",
-        "DATABASE_CUTOVER",
         "REDIS_CUTOVER",
+        "DATABASE_CUTOVER",
         "TRAFFIC",
         "FINALIZE",
     ]

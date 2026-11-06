@@ -27,11 +27,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import contextlib
 import itertools
 
-from control_plane.domain.models import ActorState, HoldDesired, WorkflowStatus
+from control_plane.domain.models import ActorState, HoldDesired, StageKind, WorkflowStatus
+from control_plane.domain.stages import PLAN
 from tests.conftest import World
 from tests.fakes import FakeClock
 
-DB_STAGE = 4
+DB_STAGE = next(i for i, s in enumerate(PLAN) if s.kind is StageKind.DATABASE_CUTOVER)
 
 
 class SwitchableClock(FakeClock):
@@ -108,16 +109,8 @@ async def one_run() -> dict[str, object]:
     world = _with_clock(clock)
 
     workflow = await world.start()
+    # Approves what comes before, Redis included, and stops as the DB cutover begins.
     await world.at_stage(workflow.id, DB_STAGE)
-    # The DB cutover asks a person first.
-    for _ in range(50):
-        current = await world.workflow(workflow.id)
-        if current.status is WorkflowStatus.WAITING_APPROVAL:
-            await world.approve(workflow.id)
-            break
-        await world.tick()
-    else:
-        raise RuntimeError(f"the DB cutover never asked for approval: {current.status}")
 
     clock.go_live()
     stop = asyncio.Event()

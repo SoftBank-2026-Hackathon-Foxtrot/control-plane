@@ -8,7 +8,7 @@ import pytest
 
 from control_plane.auth import AuthService
 from control_plane.config import Settings
-from control_plane.domain.models import ResourceKind, Workflow, WorkflowStatus
+from control_plane.domain.models import ResourceKind, StageKind, Workflow, WorkflowStatus
 from control_plane.domain.stages import PLAN
 from control_plane.engine.engine import Engine
 from control_plane.main import Platform, assemble
@@ -75,6 +75,18 @@ SEED: dict[str, Any] = {
     },
     "probe": {"groupbuyId": 1},
 }
+
+
+def stage_index(kind: StageKind) -> int:
+    return next(index for index, stage in enumerate(PLAN) if stage.kind is kind)
+
+
+CANARY_STAGE = stage_index(StageKind.CANARY)
+REDIS_STAGE = stage_index(StageKind.REDIS_CUTOVER)
+"""Also where the one approval for the Redis and DB cutovers is asked."""
+DB_STAGE = stage_index(StageKind.DATABASE_CUTOVER)
+TRAFFIC_STAGE = stage_index(StageKind.TRAFFIC)
+FINALIZE_STAGE = stage_index(StageKind.FINALIZE)
 
 SETTINGS = Settings(
     environment="local",
