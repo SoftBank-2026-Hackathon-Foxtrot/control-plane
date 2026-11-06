@@ -22,100 +22,148 @@ from control_plane.domain.models import (
 )
 from control_plane.probes import HttpAppProber, p95
 from control_plane.seed import Seed, load_seed
-from control_plane.traffic import CloudflareTraffic, TrafficError, ratio_weights
+from control_plane.traffic import TrafficError, TrafficService
 from tests.conftest import SEED, World
 from tests.fakes import FakeClock
 
 
 # ---- traffic ------------------------------------------------------------------------------------
-@pytest.mark.parametrize(
-    ("percent", "source", "target"),
-    [
-        (0, 1.0, 0.0),
-        (100, 0.0, 1.0),
-        (50, 1.0, 1.0),
-        (25, 0.9, 0.3),
-        (75, 0.3, 0.9),
-    ],
-)
-def test_weights_in_tenths_give_the_requested_split(
-    percent: int, source: float, target: float
-) -> None:
-    assert ratio_weights(percent, step=0.1) == (source, target)
+class TrafficApi:
+    """The traffic service's v1 surface, as its README and OpenAPI describe it."""
 
-
-def test_five_percent_cannot_be_expressed_in_tenths() -> None:
-    source, target = ratio_weights(5, step=0.1)
-    assert (source, target) == (1.0, 0.1)
-    assert round(target / (source + target) * 100, 1) == 9.1
-
-
-def test_a_finer_step_reaches_five_percent() -> None:
-    source, target = ratio_weights(5, step=0.01)
-    assert round(target / (source + target) * 100, 1) == 5.0
-
-
-class Cloudflare:
     def __init__(self) -> None:
-        self.steering: dict[str, Any] = {}
-        self.fail_with: int | None = None
-        self.lie = False
-        self.requests: list[httpx.Request] = []
+        self.weights = {"aws": 100.0, "gcp": 0.0}
+        self.revision = 3
+        self.unknown: list[str] = []
+        self.outcome = "SUCCEEDED"
+        self.polls_running = 1
+        self.refuse: str | None = None
+        self.posted: list[tuple[str, dict[str, Any]]] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
-        self.requests.append(request)
-        assert request.url.path == "/client/v4/zones/zone/load_balancers/lb"
-        assert request.headers["authorization"] == "Bearer cf-token"
-        if self.fail_with:
+        assert request.headers["authorization"] == "Bearer traffic-token"
+        path = request.url.path
+        if path == "/v1/traffic/status":
             return httpx.Response(
-                self.fail_with, json={"success": False, "errors": [{"message": "no"}]}
+                200,
+                json={
+                    "revision": self.revision,
+                    "unknownOperationIds": self.unknown,
+                    "weights": self.weights,
+                    "pool_health": {},
+                    "last_changed_at": None,
+                },
             )
-        if request.method == "PATCH":
+        if path == "/v1/traffic/actions":
+            if self.refuse:
+                return httpx.Response(
+                    409,
+                    json={"code": self.refuse, "message": "m", "operationId": None, "blockers": []},
+                )
             body = json.loads(request.content)
-            self.steering = body["random_steering"]
-            assert body["steering_policy"] == "random"
-        steering = {"pool_weights": {}} if self.lie else self.steering
-        return httpx.Response(200, json={"success": True, "result": {"random_steering": steering}})
+            self.posted.append((request.headers["idempotency-key"], body))
+            self.revision += 1
+            return httpx.Response(
+                202,
+                headers={"Location": "/v1/traffic/operations/op-1", "Retry-After": "1"},
+                json={
+                    "operationId": "op-1",
+                    "action": "SET_WEIGHTS",
+                    "status": "QUEUED",
+                    "statusUrl": "/v1/traffic/operations/op-1",
+                },
+            )
+        if path == "/v1/traffic/operations/op-1":
+            if self.polls_running:
+                self.polls_running -= 1
+                return httpx.Response(
+                    200,
+                    headers={"Retry-After": "1"},
+                    json={"operationId": "op-1", "status": "RUNNING"},
+                )
+            requested = self.posted[-1][1]["weights"]
+            if self.outcome == "SUCCEEDED":
+                self.weights = requested
+            return httpx.Response(
+                200,
+                json={
+                    "operationId": "op-1",
+                    "status": self.outcome,
+                    "result": {"weights": requested, "traffic_verified": False}
+                    if self.outcome == "SUCCEEDED"
+                    else None,
+                    "error": None if self.outcome == "SUCCEEDED" else "Cloudflare HTTP 500",
+                },
+            )
+        raise AssertionError(f"unexpected {request.method} {path}")
 
-    def client(self) -> CloudflareTraffic:
-        return CloudflareTraffic(
-            httpx.AsyncClient(
-                transport=httpx.MockTransport(self),
-                base_url="https://api.cloudflare.test/client/v4/",
-            ),
-            token="cf-token",
-            zone_id="zone",
-            load_balancer_id="lb",
+    def client(self) -> TrafficService:
+        async def no_wait(_: float) -> None:
+            return None
+
+        return TrafficService(
+            httpx.AsyncClient(transport=httpx.MockTransport(self), base_url="http://traffic"),
+            token="traffic-token",
+            sleep=no_wait,
         )
 
 
-async def test_weight_change_is_read_back_and_reports_the_real_split() -> None:
-    cloudflare = Cloudflare()
-    applied = await cloudflare.client().set_split(
-        source_pool="pool-aws", target_pool="pool-gcp", target_percent=5
-    )
-    assert [r.method for r in cloudflare.requests] == ["PATCH", "GET"]
-    assert cloudflare.steering["pool_weights"] == {"pool-aws": 1.0, "pool-gcp": 0.1}
-    assert cloudflare.steering["default_weight"] == 0
-    assert applied.effective_percent == {"pool-aws": 90.9, "pool-gcp": 9.1}
+async def test_a_weight_change_is_one_operation_followed_to_its_end() -> None:
+    api = TrafficApi()
+    applied = await api.client().set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+    key, body = api.posted[0]
+    assert body == {
+        "action": "SET_WEIGHTS",
+        "expectedRevision": 3,
+        "weights": {"aws": 95.0, "gcp": 5.0},
+    }
+    assert key == "control-plane-gcp-5-r3", "the same change at the same revision reuses its key"
+    assert applied.effective_percent == {"aws": 95.0, "gcp": 5.0}
 
 
-async def test_a_weight_change_that_did_not_stick_is_an_error() -> None:
-    cloudflare = Cloudflare()
-    cloudflare.lie = True
-    with pytest.raises(TrafficError, match="read back"):
-        await cloudflare.client().set_split(
-            source_pool="pool-aws", target_pool="pool-gcp", target_percent=50
+async def test_weights_already_in_place_send_nothing() -> None:
+    api = TrafficApi()
+    api.weights = {"aws": 95.0, "gcp": 5.0}
+    await api.client().set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+    assert api.posted == []
+
+
+async def test_an_unreconciled_operation_blocks_every_change() -> None:
+    api = TrafficApi()
+    api.unknown = ["op-0"]
+    with pytest.raises(TrafficError, match="UNKNOWN_STATE"):
+        await api.client().set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+    assert api.posted == []
+
+
+@pytest.mark.parametrize("outcome", ["FAILED", "UNKNOWN"])
+async def test_an_operation_that_did_not_succeed_is_an_error(outcome: str) -> None:
+    api = TrafficApi()
+    api.outcome = outcome
+    with pytest.raises(TrafficError, match=outcome):
+        await api.client().set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+
+
+async def test_a_refusal_keeps_the_service_code() -> None:
+    api = TrafficApi()
+    api.refuse = "RESOURCE_BUSY"
+    with pytest.raises(TrafficError, match="RESOURCE_BUSY"):
+        await api.client().set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+
+
+async def test_an_environment_the_service_does_not_know_is_an_error() -> None:
+    api = TrafficApi()
+    with pytest.raises(TrafficError, match="trafficPool"):
+        await api.client().set_split(
+            source_pool="pool-aws", target_pool="pool-gcp", target_percent=5
         )
 
 
-async def test_cloudflare_refusal_is_an_error() -> None:
-    cloudflare = Cloudflare()
-    cloudflare.fail_with = 403
-    with pytest.raises(TrafficError, match="403"):
-        await cloudflare.client().set_split(
-            source_pool="pool-aws", target_pool="pool-gcp", target_percent=50
-        )
+async def test_an_operation_that_never_ends_is_an_error() -> None:
+    api = TrafficApi()
+    api.polls_running = 1000
+    with pytest.raises(TrafficError, match="still RUNNING"):
+        await api.client().set_split(source_pool="aws", target_pool="gcp", target_percent=5)
 
 
 # ---- adapter client ------------------------------------------------------------------------------

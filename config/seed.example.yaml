@@ -5,11 +5,11 @@ scope: scope:goods
 environments:
   aws:
     appUrl: http://10.10.0.10:8000
-    trafficPool: pool-aws
+    trafficPool: aws  # an environment name in the traffic service's CF_POOL_IDS
     actors: {goods-aws-api: 4, goods-aws-worker: 2}
   gcp:
     appUrl: http://10.20.0.10:8000
-    trafficPool: pool-gcp
+    trafficPool: gcp
     actors: {goods-gcp-api: 4, goods-gcp-worker: 2}
 
 resources:

@@ -20,6 +20,7 @@ import time
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import boto3
@@ -274,3 +275,118 @@ async def test_evidence_from_the_coordinator_passes_the_real_verification(
     )
     assert not participants_valid(evidence[:-1], sorted(world.seed.all_actors()), 1, "HELD")
     assert hold.desired is HoldDesired.HOLD
+
+
+# ---- the traffic service -------------------------------------------------------------------------
+TRAFFIC_REPO = os.environ.get("TRAFFIC_REPO")
+TRAFFIC_TOKEN = "traffic-token"
+
+
+class FakeLoadBalancer:
+    """Cloudflare's side only: one load balancer and its two pools, as the service expects them."""
+
+    def __init__(self) -> None:
+        self.lb: dict[str, Any] = {
+            "enabled": True,
+            "proxied": True,
+            "steering_policy": "random",
+            "session_affinity": "none",
+            "default_pools": ["pool-a", "pool-b"],
+            "random_steering": {"default_weight": 0, "pool_weights": {"pool-a": 1, "pool-b": 0}},
+        }
+        self.patches: list[dict[str, Any]] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/load_balancers/test-lb"):
+            if request.method == "PATCH":
+                body = json.loads(request.content)
+                self.patches.append(body)
+                self.lb.update(body)
+            return httpx.Response(200, json={"success": True, "result": self.lb})
+        if request.url.path.endswith("/health"):
+            return httpx.Response(200, json={"success": True, "result": {"pop_health": {}}})
+        raise AssertionError(f"unexpected Cloudflare call {request.method} {request.url}")
+
+    @property
+    def pool_weights(self) -> dict[str, float]:
+        return dict(self.lb["random_steering"]["pool_weights"])
+
+
+@pytest.fixture
+async def traffic_service(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> AsyncIterator[tuple[Any, FakeLoadBalancer]]:
+    """The traffic team's server code: its routes, SQLite and Cloudflare client, in this process."""
+    if not TRAFFIC_REPO:
+        pytest.skip("TRAFFIC_REPO is not set")
+    monkeypatch.syspath_prepend(TRAFFIC_REPO)
+    from server import main as traffic_main  # type: ignore[import-not-found]
+
+    from control_plane.traffic import TrafficService
+
+    for name, value in {
+        "TRAFFIC_SERVICE_TOKEN": TRAFFIC_TOKEN,
+        "CF_API_TOKEN": "cf",
+        "CF_ACCOUNT_ID": "test-account",
+        "CF_ZONE_ID": "test-zone",
+        "CF_LB_ID": "test-lb",
+        "CF_POOL_IDS": '{"aws":"pool-a","gcp":"pool-b"}',
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(traffic_main, "DB_PATH", tmp_path / "traffic.db")
+    cloudflare = FakeLoadBalancer()
+    real_client = httpx.AsyncClient
+    # Only the traffic service's own Cloudflare client is redirected, not httpx for everyone.
+    from server import cloudflare as cloudflare_module  # type: ignore[import-not-found]
+
+    monkeypatch.setattr(
+        cloudflare_module,
+        "httpx",
+        SimpleNamespace(
+            AsyncClient=lambda **kwargs: real_client(
+                transport=httpx.MockTransport(cloudflare), **kwargs
+            )
+        ),
+    )
+
+    async def no_wait(_: float) -> None:
+        return None
+
+    async with traffic_main.lifespan(traffic_main.app):
+        http = real_client(
+            transport=httpx.ASGITransport(app=traffic_main.app), base_url="http://traffic"
+        )
+        yield TrafficService(http, token=TRAFFIC_TOKEN, sleep=no_wait), cloudflare
+        await http.aclose()
+
+
+async def test_the_real_traffic_service_moves_the_load_balancer(
+    traffic_service: tuple[Any, FakeLoadBalancer],
+) -> None:
+    service, cloudflare = traffic_service
+    applied = await service.set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+    assert applied.effective_percent == {"aws": 95.0, "gcp": 5.0}
+    assert cloudflare.pool_weights == {"pool-a": 0.95, "pool-b": 0.05}
+
+    await service.set_split(source_pool="aws", target_pool="gcp", target_percent=5)
+    assert len(cloudflare.patches) == 1, "a repeat finds the weights in place and sends nothing"
+
+    await service.set_split(source_pool="aws", target_pool="gcp", target_percent=0)
+    assert cloudflare.pool_weights == {"pool-a": 1.0, "pool-b": 0.0}
+
+
+async def test_a_whole_migration_moves_traffic_through_the_real_service(
+    traffic_service: tuple[Any, FakeLoadBalancer],
+) -> None:
+    service, cloudflare = traffic_service
+    world = World(traffic=service)
+    workflow = await world.start()
+    final = await world.run_to_end(workflow.id)
+
+    assert final.status is WorkflowStatus.COMPLETED, final.halt
+    shares = [
+        round(patch["random_steering"]["pool_weights"]["pool-b"] * 100)
+        for patch in cloudflare.patches
+    ]
+    assert shares == [5, 25, 50, 100]
+    assert cloudflare.pool_weights == {"pool-a": 0.0, "pool-b": 1.0}

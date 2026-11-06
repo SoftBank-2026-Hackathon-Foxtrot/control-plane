@@ -26,11 +26,9 @@ class Settings(BaseSettings):
     db_gate_table: str | None = None
     db_gate_namespace: str = "foxtrot-db-operator"
 
-    cloudflare_api_base: str = "https://api.cloudflare.com/client/v4"
-    cloudflare_token_secret: str = "env:CLOUDFLARE_API_TOKEN"
-    cloudflare_zone_id: str = ""
-    cloudflare_load_balancer_id: str = ""
-    cloudflare_weight_step: float = 0.1
+    traffic_url: str = "http://traffic.internal:8001"
+    """The team's traffic service, the only writer of the Cloudflare load balancer."""
+    traffic_token_secret: str = "env:TRAFFIC_SERVICE_TOKEN"
 
     workload_token_secret: str = "env:WORKLOAD_TOKEN"
 

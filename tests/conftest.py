@@ -15,6 +15,7 @@ from control_plane.main import Platform, assemble
 from control_plane.seed import Seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import MemoryTable, Table
+from control_plane.traffic import TrafficController
 from control_plane.workflows import CommandInput
 from tests.fakes import (
     FakeAdapter,
@@ -31,12 +32,12 @@ SEED: dict[str, Any] = {
     "environments": {
         "aws": {
             "appUrl": "http://aws-app:8000",
-            "trafficPool": "pool-aws",
+            "trafficPool": "aws",
             "actors": {"goods-aws-api": 4, "goods-aws-worker": 2},
         },
         "gcp": {
             "appUrl": "http://gcp-app:8000",
-            "trafficPool": "pool-gcp",
+            "trafficPool": "gcp",
             "actors": {"goods-gcp-api": 4, "goods-gcp-worker": 2},
         },
     },
@@ -99,7 +100,9 @@ SETTINGS = Settings(
 class World:
     """A whole platform with fakes at its edges, driven one second at a time."""
 
-    def __init__(self, table: Table | None = None) -> None:
+    def __init__(
+        self, table: Table | None = None, traffic: TrafficController | None = None
+    ) -> None:
         self.seed = Seed.model_validate(SEED)
         self.clock = FakeClock()
         self.table = table or MemoryTable()
@@ -114,6 +117,7 @@ class World:
             ResourceKind.OBJECT_STORAGE: self.object,
         }
         self.traffic = FakeTraffic()
+        self.traffic_controller: TrafficController = traffic or self.traffic
         self.prober = FakeProber(self.clock)
         self.platform = self._assemble()
         self.services = self.platform.engine.services
@@ -133,7 +137,7 @@ class World:
             clock=self.clock,
             adapters={kind: adapter.client() for kind, adapter in self.adapters.items()},
             gate=self.gate,
-            traffic=self.traffic,
+            traffic=self.traffic_controller,
             prober=self.prober,
             auth=AuthService(
                 repo,

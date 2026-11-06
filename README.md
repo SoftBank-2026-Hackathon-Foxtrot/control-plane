@@ -4,7 +4,7 @@
 
 > 파란 선은 제어 명령, 회색 선은 상태·근거·트래픽입니다. 양방향 화살표는 앱의 heartbeat와 플랫폼의 업무 검사입니다. [인터랙티브 버전](https://claude.ai/artifact/QMfrqiTnyDfViBgicQxv9i)
 
-Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)와 Cloudflare 가중치를 정해진 순서로 제어하고, 콘솔에 진행 상황과 제어 수단을 제공합니다.
+Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)와 트래픽 서비스를 정해진 순서로 제어하고, 콘솔에 진행 상황과 제어 수단을 제공합니다.
 
 - 설계: [플랫폼 백엔드 설계 초안](https://app.notion.com/p/40f8bee9ada48174b929d433081f41b6)
 - 공통 API: [마이그레이션 공통 Design Doc](https://app.notion.com/p/40d8bee9ada4815e9e94ee454be82d4a). `tests/contract/common-api.json`은 `db-migration-adaptor@1eac972`의 계약 사본입니다.
@@ -21,7 +21,7 @@ src/control_plane/
                 recovery: 롤백·중단·대조 / engine: 틱 루프
   workload/     앱 업무 정지·재개와 실제 정지 확인
   dbgate.py     DB 이전 서버의 정지 근거 기록 (SDK를 아는 유일한 곳)
-  traffic.py    Cloudflare 가중치 (Cloudflare를 아는 유일한 곳)
+  traffic.py    트래픽 서비스 호출 (트래픽 서비스를 아는 유일한 곳)
   probes.py     실제 앱 경로 업무 검사와 카나리 관측
   workflows.py  사람이 내리는 명령과 허용 상태
   auth.py       GitHub 로그인과 세션
@@ -75,16 +75,17 @@ uv pip install -e ../db-migration-adaptor
 ```
 
 ```bash
-OBJECT_MIGRATION_REPO=../object-migration STATEMIG_URL=http://localhost:18090 uv run --no-sync pytest tests/integration
+OBJECT_MIGRATION_REPO=../object-migration TRAFFIC_REPO=../traffic STATEMIG_URL=http://localhost:18090 uv run --no-sync pytest tests/integration
 ```
 
 Redis 스택은 `redis-migrator`에서 `docker compose -f demo/docker-compose.yml up -d --build`로 띄웁니다.
 
-2026-11-06 로컬에서 4개 모두 통과했습니다. 기준 커밋은 `db-migration-adaptor@1eac972`, `object-migration@75da4f0`, `redis-migrator@f546dcb`입니다.
+2026-11-06 로컬에서 6개 모두 통과했습니다. 기준 커밋은 `db-migration-adaptor@1eac972`, `object-migration@75da4f0`, `redis-migrator@f546dcb`, `traffic@fce029f`입니다.
 
 - 오브젝트: 전 단계 통과와 롤백, 두 가지를 실제 서버(`ENGINE=fake`)로 확인했습니다.
 - Redis: 실제 스택으로 전 단계를 통과했습니다. 한 번 이전한 스택은 프록시가 대상 쪽에 남으므로, 다시 돌리기 전에 `docker compose ... down -v`로 초기화합니다. 초기화하지 않으면 `PRECONDITION_FAILED: the proxy is on gcp`로 멈추는데, 이는 정상 동작입니다.
 - DB: 실제 `verify_gate`가 플랫폼의 정지 근거를 받아들이는지 확인했습니다. DB 전환 전체는 GCP DMS가 있어야 하므로 로컬에서 확인하지 않았습니다.
+- 트래픽: 트래픽 서비스의 실제 라우트, SQLite, Cloudflare 클라이언트를 이 프로세스에서 띄우고 Cloudflare HTTP만 바꿔 시험했습니다. 트래픽 팀의 테스트와 같은 방식입니다. 워크플로 전체를 돌려 LB가 5% → 25% → 50% → 100%로 움직이는 것을 확인했습니다.
 
 ## 실측
 
@@ -125,12 +126,13 @@ uv run python -m bench.crash_during_hold --runs 20
 
 - 실제 어댑터를 붙인 업무 정지 시간 (특히 DB 어댑터 QUIESCE, CUTOVER의 실제 소요)
 - ECS 태스크 재시작을 포함한 실환경 복구 시간
-- Cloudflare `pool_weights`의 실제 단위
 
 ## 알아 둘 동작
 
 - **DB 보존 기간:** DB 어댑터는 `RESUME` 후 보존 기간(기본 3600초)이 지나야 FINALIZE를 받습니다. 시연에서는 어댑터 설정을 줄입니다. 그동안 7단계는 30초마다 다시 시도합니다.
-- **Cloudflare 가중치 단위:** `default_weight`는 0.1 단위로 문서화되어 있고 `pool_weights`의 단위는 확인되지 않았습니다. 기본값 0.1에서는 95:5가 약 91:9로 적용되며 실제 비율을 기록합니다. 더 작은 단위가 허용되는 것을 확인하면 `CONTROL_PLANE_CLOUDFLARE_WEIGHT_STEP`을 낮춥니다.
+- **트래픽 서비스가 LB의 유일한 변경 주체:** 플랫폼은 Cloudflare를 직접 부르지 않습니다. 시드의 `trafficPool`에는 트래픽 서비스 `CF_POOL_IDS`의 환경 이름(`aws`, `gcp`)을 적습니다.
+- **가중치 단위:** 트래픽 팀이 실제 Cloudflare에서 95:5(0.95:0.05)를 적용해 성공했습니다(traffic `docs/traffic-verification-20261105.md`). 그래서 요청한 비율을 그대로 보냅니다.
+- **결과 불명 작업:** 트래픽 서비스의 작업이 UNKNOWN이면 플랫폼은 다음 가중치 변경을 보내지 않고, `command_timeout` 뒤 멈춥니다. 이전 실행 주체가 멈췄다는 근거는 사람이 확인해 트래픽 서비스에 RECONCILE을 보냅니다.
 
 ## 배포
 
@@ -158,7 +160,7 @@ docker build --secret id=github_token,env=GITHUB_TOKEN --build-arg DB_OPERATOR_R
 
 - 플랫폼 테이블의 `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`
 - DB 이전 서버 테이블의 제어 영역 쓰기
-- `secretsmanager:GetSecretValue`: 시드와 설정에 있는 시크릿만
+- `secretsmanager:GetSecretValue`: 시드와 설정에 있는 시크릿만 (어댑터 토큰, `TRAFFIC_SERVICE_TOKEN` 등)
 
 앱의 DB, Redis, 버킷에는 권한을 주지 않습니다. 플랫폼은 저장소를 직접 다루지 않습니다.
 
@@ -176,3 +178,4 @@ docker build --secret id=github_token,env=GITHUB_TOKEN --build-arg DB_OPERATOR_R
   - 순서를 바꾼 이유: Redis 전환이 실패해도 DB는 원본에 그대로 있으므로, Redis만 되돌리면 모든 리소스가 원본으로 돌아갑니다. 이전 순서에서는 DB가 이미 대상에 쓰기 시작한 뒤라 섞인 상태로 멈췄습니다.
   - 승인을 Redis 앞으로 옮긴 이유: 두 전환 사이에 승인을 기다리면, 그동안 DB와 Redis가 서로 다른 클라우드에 있는 구간이 길어집니다.
   - 근거 정리: [동기화 시 병렬 vs 직렬](https://app.notion.com/p/40f8bee9ada48011a87cf7d442ca2ebb)
+- **트래픽은 팀 트래픽 서비스로:** 설계는 플랫폼 내부 모듈이 Cloudflare를 직접 호출하는 안이었습니다. 트래픽 팀이 별도 서비스(`POST /v1/traffic/actions`)를 만들었고, LB를 바꾸는 주체는 하나여야 하므로 그 서비스를 부르도록 바꿨습니다. `TrafficController` 인터페이스는 그대로라 엔진은 바뀌지 않았습니다.

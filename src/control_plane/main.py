@@ -28,7 +28,7 @@ from control_plane.probes import AppProber, HttpAppProber, ProbeLoop
 from control_plane.seed import Seed, load_seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import DynamoTable, MemoryTable, Table
-from control_plane.traffic import CloudflareTraffic, TrafficController
+from control_plane.traffic import TrafficController, TrafficService
 from control_plane.workflows import WorkflowService
 from control_plane.workload.coordinator import WorkloadCoordinator
 
@@ -125,12 +125,9 @@ def build_platform(settings: Settings) -> Platform:
             region=settings.region,
             endpoint=None if settings.dynamodb_endpoint == "memory" else settings.dynamodb_endpoint,
         )
-    traffic = CloudflareTraffic(
-        client(base_url=settings.cloudflare_api_base),
-        token=secret(settings.cloudflare_token_secret),
-        zone_id=settings.cloudflare_zone_id,
-        load_balancer_id=settings.cloudflare_load_balancer_id,
-        weight_step=settings.cloudflare_weight_step,
+    traffic = TrafficService(
+        client(base_url=settings.traffic_url),
+        token=secret(settings.traffic_token_secret),
     )
     repo = Repository(table)
     auth = AuthService(
