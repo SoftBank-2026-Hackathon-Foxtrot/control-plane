@@ -85,12 +85,12 @@ async def test_database_cannot_return_after_target_writes(world: World) -> None:
 async def test_database_rollback_before_target_writes_stops_the_workload_again(
     world: World,
 ) -> None:
-    world.db.faults["RESUME"] = Fault("FAILED", code="TARGET_NOT_READY")
+    world.db.faults["CUTOVER"] = Fault("FAILED", code="TARGET_NOT_READY")
     workflow = await world.start()
     await world.at_stage(workflow.id, DB_STAGE)
     halted = await world.run_to_end(workflow.id)
     assert halted.halt is not None and halted.halt.code == "TARGET_NOT_READY"
-    assert world.db.only.lifecycle == "SWITCHED"
+    assert world.db.only.lifecycle == "QUIESCED"
     assert (await world.services.coordinator.hold()).desired.value == "HOLD"
     for _ in range(10):
         await world.tick()
@@ -185,8 +185,8 @@ async def test_abort_leaves_a_switched_resource_where_it_is(world: World) -> Non
 
 
 async def test_abort_refuses_to_walk_away_from_a_paused_database(world: World) -> None:
-    """A failed QUIESCE may have paused the proxy. Apps let loose on that would be an outage."""
-    world.db.faults["QUIESCE"] = Fault("FAILED")
+    """CUTOVER 중 프록시가 멈추면 앱 업무를 임의로 재개하지 않습니다."""
+    world.db.faults["CUTOVER"] = Fault("FAILED")
     workflow = await world.start()
     await world.at_stage(workflow.id, DB_STAGE)
     halted = await world.run_to_end(workflow.id)
@@ -250,7 +250,7 @@ async def test_a_rollback_timed_out_once_gets_its_full_time_again(world: World) 
 
 
 async def test_rollback_that_cannot_hold_the_workload_lets_it_run(world: World) -> None:
-    world.db.faults["RESUME"] = Fault("FAILED", code="TARGET_NOT_READY")
+    world.db.faults["CUTOVER"] = Fault("FAILED", code="TARGET_NOT_READY")
     workflow = await world.start()
     await world.at_stage(workflow.id, DB_STAGE)
     await world.run_to_end(workflow.id)

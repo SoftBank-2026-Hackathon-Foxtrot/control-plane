@@ -12,7 +12,13 @@ from typing import Any, ClassVar
 
 from control_plane.adapters.client import MigrationView
 from control_plane.domain.models import ResourceKind, ResourceState, Workflow
-from control_plane.seed import ResourceSeed, Timings
+from control_plane.seed import (
+    ATOMIC_LOGICAL_PROFILE,
+    DMS_PROFILE,
+    DatabaseSeed,
+    ResourceSeed,
+    Timings,
+)
 
 ORCHESTRATOR_EVIDENCE = frozenset({"WORKLOAD_RUNNING", "BUSINESS_PROBE"})
 """Checks the adapters report as UNKNOWN because only the platform can judge them."""
@@ -49,13 +55,22 @@ class ResourceProfile(ABC):
             "workflowId": workflow.id,
             "resourceId": self.resource_id,
             "kind": self.kind.value,
-            "profile": self.profile,
+            "profile": self.selected_profile(seed),
             "sourceRef": seed.source_ref,
             "targetRef": seed.target_ref,
             "bindingRef": resource.binding_ref or seed.binding_ref,
             "workloadScopeRef": resource.workload_scope_ref or scope,
             "policy": self._policy(seed),
         }
+
+    def selected_profile(self, seed: ResourceSeed) -> str:
+        return self.profile
+
+    def check_before_hold(self, seed: ResourceSeed) -> bool:
+        return False
+
+    def needs_held_evidence(self, action: str, seed: ResourceSeed) -> bool:
+        return self.requires_workload_hold
 
     def _policy(self, seed: ResourceSeed) -> dict[str, Any]:
         # The contract says integer, and the DB and object adapters refuse anything else.
@@ -76,7 +91,7 @@ class ResourceProfile(ABC):
     def rollback_extra(self, mode: str) -> dict[str, Any]:
         return {}
 
-    def unknown_budget(self, timings: Timings) -> UnknownBudget:
+    def unknown_budget(self, timings: Timings, seed: ResourceSeed) -> UnknownBudget:
         return UnknownBudget(attempts=timings.unknown_retry_limit)
 
     def _settled(self, view: MigrationView) -> Verdict:
@@ -92,17 +107,29 @@ class ResourceProfile(ABC):
 class DatabaseProfile(ResourceProfile):
     kind = ResourceKind.DATABASE
     resource_id = "database"
-    profile = "gcp-dms-postgres-pgbouncer-v1"
+    profile = ATOMIC_LOGICAL_PROFILE
     requires_workload_hold = True
     adapter_judges_advance = True
 
     def plan_body(
         self, workflow: Workflow, seed: ResourceSeed, resource: ResourceState, scope: str
     ) -> dict[str, Any]:
-        return {
-            **super().plan_body(workflow, seed, resource, scope),
-            "replicationRef": seed.replication_ref,
-        }
+        body = super().plan_body(workflow, seed, resource, scope)
+        if self.selected_profile(seed) == DMS_PROFILE:
+            body["replicationRef"] = seed.replication_ref
+        return body
+
+    def selected_profile(self, seed: ResourceSeed) -> str:
+        assert isinstance(seed, DatabaseSeed)
+        return seed.profile
+
+    def check_before_hold(self, seed: ResourceSeed) -> bool:
+        return self.selected_profile(seed) == ATOMIC_LOGICAL_PROFILE
+
+    def needs_held_evidence(self, action: str, seed: ResourceSeed) -> bool:
+        if self.check_before_hold(seed):
+            return action in {"CUTOVER", "ROLLBACK"}
+        return True
 
     def advance(self, view: MigrationView) -> Verdict:
         # With the RUNNING record and the probe evidence the platform writes, the adapter can
@@ -110,10 +137,12 @@ class DatabaseProfile(ResourceProfile):
         decision = view.readiness("advance")
         return Verdict(decision.passed, ", ".join(decision.reasons))
 
-    def unknown_budget(self, timings: Timings) -> UnknownBudget:
+    def unknown_budget(self, timings: Timings, seed: ResourceSeed) -> UnknownBudget:
         # DMS calls give up after a short wait and report UNKNOWN while Google keeps working, so
         # UNKNOWN then RECONCILE is the normal path here.
-        return UnknownBudget(seconds=timings.dms_unknown_deadline)
+        if self.selected_profile(seed) == DMS_PROFILE:
+            return UnknownBudget(seconds=timings.dms_unknown_deadline)
+        return super().unknown_budget(timings, seed)
 
 
 class RedisProfile(ResourceProfile):

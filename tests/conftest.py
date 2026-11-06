@@ -45,12 +45,10 @@ SEED: dict[str, Any] = {
         "database": {
             "sourceRef": "db:goods-rds",
             "targetRef": "db:goods-cloudsql",
-            "replicationRef": "dms:goods",
             "policy": {"rollbackMode": "BEFORE_TARGET_WRITE", "maxQuiesceSeconds": 300},
             "catalog": {
                 "databases": {"db:goods-rds": {}, "db:goods-cloudsql": {}},
                 "tables": ["public.orders"],
-                "dmsJob": {"job": "projects/p/locations/l/migrationJobs/j"},
                 "alias": "appdb",
                 "appRef": "app:goods",
             },

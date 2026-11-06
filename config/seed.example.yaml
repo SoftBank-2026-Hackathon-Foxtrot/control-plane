@@ -14,9 +14,9 @@ environments:
 
 resources:
   database:
+    profile: postgres-managed-logical-pgbouncer-v2
     sourceRef: db:goods-rds
     targetRef: db:goods-cloudsql
-    replicationRef: dms:goods
     policy: {rollbackMode: BEFORE_TARGET_WRITE, maxQuiesceSeconds: 300}
     catalog:
       alias: appdb
@@ -40,11 +40,6 @@ resources:
           writer_role: goods_writer
           route_host: 10.21.0.5
           database: appdb
-      dmsJob:
-        job: projects/foxtrot/locations/asia-northeast3/migrationJobs/goods
-        source: projects/foxtrot/locations/asia-northeast3/connectionProfiles/goods-rds
-        destination: projects/foxtrot/locations/asia-northeast3/connectionProfiles/goods-sql
-        owner: foxtrot
   redis:
     sourceRef: resource:aws
     targetRef: resource:gcp

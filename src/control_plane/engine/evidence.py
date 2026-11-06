@@ -20,10 +20,10 @@ class WorkloadNotHeld(Exception):
 
 
 async def quiesce_reference(
-    ctx: StageContext, kind: ResourceKind, transition_id: str, generation: int
+    ctx: StageContext, kind: ResourceKind, transition_id: str, generation: int, action: str
 ) -> str:
     """A reference the adapter will accept for this resource, right now."""
-    if not PROFILES[kind].requires_workload_hold:
+    if not PROFILES[kind].needs_held_evidence(action, ctx.seed.resources.of(kind)):
         # This adapter stops its own writes. The platform's record of the attempt is the reference.
         return f"quiesce:{kind.value.lower()}:{transition_id}:{generation}"
     coordinator = ctx.services.coordinator

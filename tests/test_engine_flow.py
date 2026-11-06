@@ -102,8 +102,11 @@ async def test_database_commands_carry_fresh_evidence_of_a_stopped_workload(worl
     await world.run_to_end(workflow.id)
 
     held = [b for b in world.db.received if b["action"] in {"QUIESCE", "CUTOVER", "RESUME"}]
-    references = [body["quiesceRef"] for body in held]
-    assert len(set(references)) == 3, "topology changes retire a reference"
+    cutover = next(body for body in held if body["action"] == "CUTOVER")
+    assert cutover["quiesceRef"] in world.gate.gates
+    assert all(
+        body["quiesceRef"] not in world.gate.gates for body in held if body["action"] != "CUTOVER"
+    )
     assert {body["transitionId"] for body in held} == {f"tx-{workflow.id}-database"}
     assert next(b for b in held if b["action"] == "RESUME")["expectedLocation"] == "TARGET"
     assert world.gate.catalog_published == 1

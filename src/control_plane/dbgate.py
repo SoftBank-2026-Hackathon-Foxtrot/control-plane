@@ -24,10 +24,10 @@ class DbGate(Protocol):
         sequences: list[str],
         scope: str,
         participants: list[str],
-        dms_ref: str,
+        dms_ref: str | None,
         source_ref: str,
         target_ref: str,
-        dms_job: dict[str, Any],
+        dms_job: dict[str, Any] | None,
     ) -> None: ...
 
     async def issue_held(
@@ -89,12 +89,15 @@ class SdkDbGate:
         sequences: list[str],
         scope: str,
         participants: list[str],
-        dms_ref: str,
+        dms_ref: str | None,
         source_ref: str,
         target_ref: str,
-        dms_job: dict[str, Any],
+        dms_job: dict[str, Any] | None,
     ) -> None:
         from db_operator.config import Database
+
+        if (dms_ref is None) != (dms_job is None):
+            raise DbGateError("DMS registration needs both dms_ref and dms_job")
 
         def publish() -> None:
             for reference, definition in databases.items():
@@ -105,9 +108,11 @@ class SdkDbGate:
                     sequences=sequences,
                 )
             self.catalog.workload(scope, participants)
-            self.catalog.dms_job(
-                dms_ref, source_ref=source_ref, target_ref=target_ref, binding=dms_job
-            )
+            if dms_ref is not None:
+                assert dms_job is not None
+                self.catalog.dms_job(
+                    dms_ref, source_ref=source_ref, target_ref=target_ref, binding=dms_job
+                )
 
         await self._guarded(publish)
 

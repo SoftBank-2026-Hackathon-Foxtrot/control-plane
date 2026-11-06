@@ -86,7 +86,7 @@ class Prepare:
             return Passed()
         seed = ctx.seed.resources.database
         catalog = seed.catalog
-        assert catalog is not None and seed.replication_ref is not None
+        assert catalog is not None
         if not ctx.stage.data.get("catalog_published"):
             await ctx.services.gate.publish_catalog(
                 databases=catalog.databases,
@@ -228,17 +228,28 @@ class Cutover:
             if ctx.elapsed("ready") > ctx.seed.timings.apps_following_timeout:
                 return Stop("NOT_READY_FOR_CUTOVER", verdict.reason, resource=kind)
             return Wait(verdict.reason)
-        return self._to(ctx, "HOLD")
+        check_first = PROFILES[kind].check_before_hold(ctx.seed.resources.of(kind))
+        return self._to(ctx, "QUIESCE" if check_first else "HOLD")
 
     async def _hold(self, ctx: StageContext, kind: ResourceKind) -> Outcome:
+        check_first = PROFILES[kind].check_before_hold(ctx.seed.resources.of(kind))
         outcome = await hold_workload(ctx, kind)
         if isinstance(outcome, Stop):
-            ctx.stage.data["phase"] = "CHECK"
-        return self._to(ctx, "QUIESCE") if isinstance(outcome, Passed) else outcome
+            ctx.stage.data["phase"] = "HOLD" if check_first else "CHECK"
+        return (
+            self._to(ctx, "CUTOVER" if check_first else "QUIESCE")
+            if isinstance(outcome, Passed)
+            else outcome
+        )
 
     async def _quiesce(self, ctx: StageContext, kind: ResourceKind) -> Outcome:
         outcome = await held_command(self.runner, ctx, kind, "QUIESCE", slot="QUIESCE")
-        return self._to(ctx, "CUTOVER") if isinstance(outcome, Passed) else outcome
+        check_first = PROFILES[kind].check_before_hold(ctx.seed.resources.of(kind))
+        return (
+            self._to(ctx, "HOLD" if check_first else "CUTOVER")
+            if isinstance(outcome, Passed)
+            else outcome
+        )
 
     async def _cutover(self, ctx: StageContext, kind: ResourceKind) -> Outcome:
         outcome = await held_command(self.runner, ctx, kind, "CUTOVER", slot="CUTOVER")

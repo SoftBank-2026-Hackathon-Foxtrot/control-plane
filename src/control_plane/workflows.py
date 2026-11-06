@@ -93,11 +93,12 @@ class WorkflowService:
             except (AdapterUnreachable, AdapterError) as error:
                 raise ApiError(503, "ADAPTER_UNAVAILABLE", f"{kind.value}: {error}") from error
             offered = {entry.get("profile") for entry in capabilities.get("profiles", [])}
-            if profile.profile not in offered:
+            selected = profile.selected_profile(self.seed.resources.of(kind))
+            if selected not in offered:
                 raise ApiError(
                     422,
                     "UNSUPPORTED_PROFILE",
-                    f"{kind.value} does not offer {profile.profile}",
+                    f"{kind.value} does not offer {selected}",
                     sorted(str(name) for name in offered),
                 )
 

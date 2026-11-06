@@ -9,6 +9,7 @@ Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)
 - 설계: [플랫폼 백엔드 설계 초안](https://app.notion.com/p/40f8bee9ada48174b929d433081f41b6)
 - 공통 API: [마이그레이션 공통 Design Doc](https://app.notion.com/p/40d8bee9ada4815e9e94ee454be82d4a). `tests/contract/common-api.json`은 `db-migration-adaptor@1eac972`의 계약 사본입니다.
 - 앱이 구현할 내용: [docs/app-integration.md](docs/app-integration.md)
+- DB 에이전트 연결: [docs/native-db-agent.md](docs/native-db-agent.md). 기본은 PostgreSQL 직접 논리 복제입니다. DMS 작업과 Promote를 사용하지 않습니다.
 
 ## 구조
 
@@ -84,7 +85,7 @@ Redis 스택은 `redis-migrator`에서 `docker compose -f demo/docker-compose.ym
 
 - 오브젝트: 전 단계 통과와 롤백, 두 가지를 실제 서버(`ENGINE=fake`)로 확인했습니다.
 - Redis: 실제 스택으로 전 단계를 통과했습니다. 한 번 이전한 스택은 프록시가 대상 쪽에 남으므로, 다시 돌리기 전에 `docker compose ... down -v`로 초기화합니다. 초기화하지 않으면 `PRECONDITION_FAILED: the proxy is on gcp`로 멈추는데, 이는 정상 동작입니다.
-- DB: 실제 `verify_gate`가 플랫폼의 정지 근거를 받아들이는지 확인했습니다. DB 전환 전체는 GCP DMS가 있어야 하므로 로컬에서 확인하지 않았습니다.
+- DB: 당시 DMS 프로필은 실제 `verify_gate`가 플랫폼의 정지 근거를 받아들이는지 확인했습니다. 직접 논리 복제 프로필의 후속 검증 범위는 [DB 에이전트 연결](docs/native-db-agent.md)에 기록합니다.
 - 트래픽: 트래픽 서비스의 실제 라우트, SQLite, Cloudflare 클라이언트를 이 프로세스에서 띄우고 Cloudflare HTTP만 바꿔 시험했습니다. 트래픽 팀의 테스트와 같은 방식입니다. 워크플로 전체를 돌려 LB가 5% → 25% → 50% → 100%로 움직이는 것을 확인했습니다.
 
 ## 실측

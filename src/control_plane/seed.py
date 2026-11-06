@@ -8,12 +8,16 @@ failing halfway through a migration.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Final, Literal, Self
 
 import yaml
 from pydantic import Field, model_validator
 
 from control_plane.domain.models import Model, ResourceKind
+
+MANAGED_LOGICAL_PROFILE: Final = "postgres-managed-logical-pgbouncer-v1"
+ATOMIC_LOGICAL_PROFILE: Final = "postgres-managed-logical-pgbouncer-v2"
+DMS_PROFILE: Final = "gcp-dms-postgres-pgbouncer-v1"
 
 
 class Environment(Model):
@@ -34,7 +38,7 @@ class DatabaseCatalog(Model):
     databases: dict[str, dict[str, Any]]
     tables: list[str] = Field(min_length=1)
     sequences: list[str] = Field(default_factory=list)
-    dms_job: dict[str, Any]
+    dms_job: dict[str, Any] | None = None
     alias: str
     app_ref: str
 
@@ -49,15 +53,37 @@ class ResourceSeed(Model):
     catalog: DatabaseCatalog | None = None
 
 
+class DatabaseSeed(ResourceSeed):
+    profile: Literal[
+        "postgres-managed-logical-pgbouncer-v2",
+        "postgres-managed-logical-pgbouncer-v1",
+        "gcp-dms-postgres-pgbouncer-v1",
+    ] = ATOMIC_LOGICAL_PROFILE
+
+    @model_validator(mode="after")
+    def replication(self) -> Self:
+        if self.catalog is None:
+            raise ValueError("database needs catalog")
+        if self.profile == DMS_PROFILE:
+            if not self.replication_ref or not self.catalog.dms_job:
+                raise ValueError("DMS profile needs replicationRef and catalog.dmsJob")
+        elif self.replication_ref is not None or self.catalog.dms_job is not None:
+            raise ValueError("managed logical profile rejects replicationRef and catalog.dmsJob")
+        if self.policy.rollback_mode != "BEFORE_TARGET_WRITE":
+            raise ValueError("database requires BEFORE_TARGET_WRITE; reverse replication is absent")
+        budget = self.policy.max_quiesce_seconds
+        if not 1 <= budget <= 300 or not budget.is_integer():
+            raise ValueError("database maxQuiesceSeconds must be an integer from 1 to 300")
+        return self
+
+
 class Resources(Model):
-    database: ResourceSeed
+    database: DatabaseSeed
     redis: ResourceSeed
     object: ResourceSeed
 
     @model_validator(mode="after")
     def complete(self) -> Self:
-        if self.database.catalog is None or self.database.replication_ref is None:
-            raise ValueError("database needs catalog and replicationRef")
         if self.redis.binding_ref is None or self.object.binding_ref is None:
             raise ValueError("redis and object need bindingRef")
         if self.object.expected_apps is None:

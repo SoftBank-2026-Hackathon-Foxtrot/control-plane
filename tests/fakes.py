@@ -193,11 +193,17 @@ class FakeAdapter:
 
     def capabilities(self) -> dict[str, Any]:
         profile = {
-            ResourceKind.DATABASE: "gcp-dms-postgres-pgbouncer-v1",
+            ResourceKind.DATABASE: "postgres-managed-logical-pgbouncer-v2",
             ResourceKind.REDIS: "redis-proxy-sync-v1",
             ResourceKind.OBJECT_STORAGE: "object-copy-route-v1",
         }[self.kind]
-        return {"apiVersion": "v1", "profiles": [{"kind": self.kind.value, "profile": profile}]}
+        profiles = [{"kind": self.kind.value, "profile": profile}]
+        if self.kind is ResourceKind.DATABASE:
+            profiles.append({"kind": self.kind.value, "profile": "gcp-dms-postgres-pgbouncer-v1"})
+            profiles.append(
+                {"kind": self.kind.value, "profile": "postgres-managed-logical-pgbouncer-v1"}
+            )
+        return {"apiVersion": "v1", "profiles": profiles}
 
     # ---- plans -------------------------------------------------------------------------------
     def _create(self, plan: dict[str, Any]) -> tuple[int, dict[str, Any]]:
@@ -213,7 +219,10 @@ class FakeAdapter:
         if self.kind is ResourceKind.DATABASE:
             assert plan["bindingRef"] in self.bindings
             assert plan["workloadScopeRef"] == self.bindings[plan["bindingRef"]]["workloadScopeRef"]
-            assert plan["replicationRef"]
+            if plan["profile"] == "gcp-dms-postgres-pgbouncer-v1":
+                assert plan["replicationRef"]
+            else:
+                assert "replicationRef" not in plan
         else:
             assert "replicationRef" not in plan
         migration = Migration(id=f"mig-{uuid4().hex[:8]}", plan=plan)
@@ -258,6 +267,12 @@ class FakeAdapter:
             actions.append("CANCEL" if migration.transition_state == "NONE" else "ROLLBACK")
         if migration.lifecycle == "ACTIVE":
             actions = ["FINALIZE"]  # the DMS profile has no way back
+        if (
+            migration.plan["profile"] == "postgres-managed-logical-pgbouncer-v2"
+            and migration.lifecycle == "SWITCHED"
+            and migration.target_writes
+        ):
+            actions = ["RESUME"]
         if migration.lifecycle == "CANCELLED":
             actions = ["FINALIZE"]
         return [*actions, "RECONCILE"]
@@ -324,7 +339,10 @@ class FakeAdapter:
                 return _error(400, "INVALID_REQUEST", f"{action} needs transitionId and quiesceRef")
             if migration.transition_id and migration.transition_id != body["transitionId"]:
                 return _error(409, "INVALID_STATE", "another transition")
-            if self.kind is ResourceKind.DATABASE and self.gate:
+            atomic_check = migration.plan[
+                "profile"
+            ] == "postgres-managed-logical-pgbouncer-v2" and action in {"QUIESCE", "RESUME"}
+            if self.kind is ResourceKind.DATABASE and self.gate and not atomic_check:
                 problem = self.gate.verify(body["quiesceRef"], migration.id)
                 if problem:
                     return _error(409, problem, "the quiesce evidence does not hold")
@@ -474,7 +492,10 @@ class FakeAdapter:
         if action == "QUIESCE" and migration.lifecycle == "ACTIVE":
             migration.lifecycle = "QUIESCED"
             return
-        if action == "CUTOVER" and self.kind is ResourceKind.REDIS:
+        if action == "CUTOVER" and (
+            self.kind is ResourceKind.REDIS
+            or migration.plan["profile"] == "postgres-managed-logical-pgbouncer-v2"
+        ):
             migration.target_writes = True
         if action == "ROLLBACK":
             migration.rolled_back = True

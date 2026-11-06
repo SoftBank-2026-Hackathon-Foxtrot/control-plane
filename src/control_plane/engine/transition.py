@@ -65,7 +65,7 @@ async def held_command(
     fields: dict[str, Any] | None = None,
 ) -> Outcome:
     """A command that must carry fresh evidence that the workload stands still."""
-    needs_hold = PROFILES[kind].requires_workload_hold
+    needs_hold = PROFILES[kind].needs_held_evidence(action, ctx.seed.resources.of(kind))
     generation = 0
     if needs_hold:
         hold = await ctx.services.coordinator.hold()
@@ -78,7 +78,7 @@ async def held_command(
     tx = transition_id(ctx, kind)
 
     async def extra() -> dict[str, Any]:
-        reference = await quiesce_reference(ctx, kind, tx, generation)
+        reference = await quiesce_reference(ctx, kind, tx, generation, action)
         body: dict[str, Any] = {"transitionId": tx, "quiesceRef": reference, **(fields or {})}
         if location:
             body["expectedLocation"] = location

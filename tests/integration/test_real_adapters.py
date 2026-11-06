@@ -30,12 +30,14 @@ from moto import mock_aws
 
 from control_plane.adapters.client import AdapterClient
 from control_plane.clock import stamp
+from control_plane.dbgate import SdkDbGate
 from control_plane.domain.models import (
     HoldDesired,
     ResourceKind,
     Workflow,
     WorkflowStatus,
 )
+from control_plane.seed import load_seed
 from tests.conftest import World
 
 pytestmark = pytest.mark.integration
@@ -275,6 +277,38 @@ async def test_evidence_from_the_coordinator_passes_the_real_verification(
     )
     assert not participants_valid(evidence[:-1], sorted(world.seed.all_actors()), 1, "HELD")
     assert hold.desired is HoldDesired.HOLD
+
+
+async def test_native_catalog_uses_the_real_sdk_without_registering_a_dms_job(
+    db_operator_store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed = load_seed(Path(__file__).parents[2] / "config" / "seed.example.yaml")
+    database = seed.resources.database
+    catalog = database.catalog
+    assert catalog is not None
+    db_operator_store.initialize()
+    gate = SdkDbGate("db-state", namespace="test", region="ap-northeast-2")
+
+    def unexpected_dms(*_: Any, **__: Any) -> None:
+        pytest.fail("native registration must not publish a DMS job")
+
+    monkeypatch.setattr(gate.catalog, "dms_job", unexpected_dms)
+    await gate.publish_catalog(
+        databases=catalog.databases,
+        tables=catalog.tables,
+        sequences=catalog.sequences,
+        scope=seed.scope,
+        participants=sorted(seed.all_actors()),
+        source_ref=database.source_ref,
+        target_ref=database.target_ref,
+        dms_ref=None,
+        dms_job=None,
+    )
+    rows = db_operator_store.transact(lambda tx: tx.list("CATALOG_DB"))
+    assert len(rows) == 2
+    scopes = db_operator_store.transact(lambda tx: tx.list("CATALOG_SCOPE"))
+    assert scopes[0]["participants"] == sorted(seed.all_actors())
+    assert not db_operator_store.transact(lambda tx: tx.list("CATALOG_DMS"))
 
 
 # ---- the traffic service -------------------------------------------------------------------------

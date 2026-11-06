@@ -104,6 +104,11 @@ async def test_an_unknown_result_that_did_apply_is_not_applied_again(world: Worl
 
 
 async def test_database_tolerates_repeated_unknowns_while_dms_works(world: World) -> None:
+    seed = world.seed.resources.database
+    seed.profile = "gcp-dms-postgres-pgbouncer-v1"
+    seed.replication_ref = "dms:goods"
+    assert seed.catalog is not None
+    seed.catalog.dms_job = {"job": "projects/p/locations/l/migrationJobs/j"}
     world.db.faults["CUTOVER"] = Fault("UNKNOWN", times=5)
     workflow = await world.start()
     final = await world.run_to_end(workflow.id)
@@ -183,7 +188,7 @@ async def test_a_workload_that_will_not_stop_blocks_the_cutover_and_is_released(
 
     assert final.halt is not None and final.halt.code == "HOLD_TIMEOUT"
     assert any("goods-gcp-worker" in blocker for blocker in final.halt.blockers)
-    assert "QUIESCE" not in [body["action"] for body in world.db.received]
+    assert "CUTOVER" not in [body["action"] for body in world.db.received]
     hold = await world.services.coordinator.hold()
     assert hold.desired.value == "RUN", "the workload must not stay stopped for nothing"
 
@@ -193,13 +198,13 @@ async def test_a_workload_that_will_not_stop_blocks_the_cutover_and_is_released(
 
 
 async def test_a_workload_that_stops_reporting_mid_cutover_blocks_it(world: World) -> None:
-    world.db.faults["QUIESCE"] = Fault("STUCK")
+    world.db.faults["CUTOVER"] = Fault("STUCK")
     workflow = await world.start()
     await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
     await world.approve(workflow.id)
     for _ in range(600):  # Redis moves first
         await world.tick()
-        if "QUIESCE" in [body["action"] for body in world.db.received]:
+        if "CUTOVER" in [body["action"] for body in world.db.received]:
             break
     world.workload.silent = True
     final = await world.until(workflow.id, WorkflowStatus.HALTED, limit=400)

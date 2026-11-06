@@ -305,7 +305,9 @@ class CommandRunner:
             record.reconcile_attempts = 0
             record.reconcile_started_at = ctx.now
             await self._save(ctx, record)
-        budget = PROFILES[command.resource].unknown_budget(ctx.seed.timings)
+        budget = PROFILES[command.resource].unknown_budget(
+            ctx.seed.timings, ctx.seed.resources.of(command.resource)
+        )
         started = record.reconcile_started_at or record.created_at
         if (budget.attempts is not None and record.reconcile_attempts >= budget.attempts) or (
             budget.seconds is not None and (ctx.now - started).total_seconds() > budget.seconds
