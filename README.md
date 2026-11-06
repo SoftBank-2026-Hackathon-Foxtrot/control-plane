@@ -136,33 +136,138 @@ uv run python -m bench.crash_during_hold --runs 20
 
 ## 배포
 
-ECS 태스크 하나로 실행합니다. Worker를 늘리지 않습니다. 실행 주체가 하나라는 전제로 설계했습니다.
+인프라 담당에게 넘기는 배포 요구사항입니다. 2026-11-06에 이 이미지를 로컬 Docker로 띄워 `/health`, heartbeat, 토큰 거절(401), 헬스체크 `healthy`, 비root 실행을 확인했습니다. 클라우드 배포는 아직 하지 않았습니다.
 
-```bash
-make image-build
-```
+### 배포 위치
 
-DB 전환을 쓰려면 `db_operator` 패키지가 필요합니다. 비공개 저장소이므로 이미지 빌드 시 `github_token` 시크릿으로 설치합니다.
+AWS 관리 VPC에 ECS 서비스로 둡니다. 이전 서버 세 개(DB, Redis, 오브젝트)와 트래픽 서비스도 같은 관리 VPC에 있고, control-plane이 이들을 부릅니다. 플랫폼은 앱의 DB, Redis, 버킷을 직접 다루지 않습니다.
 
-```bash
-docker build --secret id=github_token,env=GITHUB_TOKEN --build-arg DB_OPERATOR_REF=1eac972 -t foxtrot/control-plane .
-```
+### 이미지
+
+| 항목 | 값 |
+| --- | --- |
+| 빌드 | `docker build --secret id=github_token,env=GITHUB_TOKEN --build-arg DB_OPERATOR_REF=1eac972 -t foxtrot/control-plane .` |
+| 실행 | 기본 CMD `control-plane` (uvicorn, `0.0.0.0:8000`) |
+| 크기 | 약 334MB |
+| 실행 사용자 | UID 10001 (root 아님) |
+
+- `db_operator`는 DB 이전 서버의 비공개 패키지입니다. 빌드할 때 `db-migration-adaptor`를 읽을 수 있는 GitHub 토큰을 `github_token` 시크릿으로 넘깁니다. 토큰은 이미지에 남지 않습니다.
+- 토큰 없이 빌드한 이미지는 `CONTROL_PLANE_DB_GATE_TABLE`을 비워 둘 때만 뜹니다. 이 경우 DB 전환 단계에서 이유를 남기고 멈춥니다. 테이블을 설정했는데 패키지가 없으면 시작할 때 실패합니다.
+- `DB_OPERATOR_REF`는 DB 이전 서버 담당과 맞춘 커밋을 씁니다. 지금은 `1eac972`이고, 연동 테스트(`tests/contract/common-api.json`)도 이 커밋 기준입니다.
+
+### 서비스
+
+태스크 1개로 고정합니다. 엔진은 실행 주체가 하나라는 전제로 설계했습니다. 둘이 뜨면 잠금(lease)으로 한쪽만 진행하지만, 새 태스크가 옛 태스크의 잠금이 풀리기를 최대 15초 기다립니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 태스크 수 | 1 |
+| 배포 설정 | `minimumHealthyPercent=0`, `maximumPercent=100` (옛 태스크를 내린 뒤 새 태스크를 띄움) |
+| 오토스케일링 | 붙이지 않음 |
+| 포트 | 8000 |
+| 크기 | 0.5 vCPU, 1GB면 충분 (측정한 값은 아님) |
+| 주소 | `control-plane.internal:8000` (Cloud Map 또는 내부 DNS) |
+
+**마이그레이션 중에는 재배포하지 않습니다.** 재시작해도 DynamoDB에 저장된 상태에서 이어 가지만, 앱 업무가 정지된 구간이라면 새 태스크가 뜰 때까지 앱이 계속 멈춰 있습니다.
+
+### 시드 파일
+
+이미지에는 시드가 없습니다. 관리 대상 앱, 환경, 리소스, 이전 서버 주소를 담은 YAML 하나를 `/srv/config/seed.yaml`에 넣습니다. 경로는 `CONTROL_PLANE_SEED_PATH`로 바꿀 수 있습니다. 형식은 [config/seed.example.yaml](config/seed.example.yaml)을 따릅니다.
+
+ECS에서 넣는 방법은 둘 중 하나입니다. 시드를 바꾸면 태스크를 다시 띄워야 반영됩니다.
+
+- 시드를 복사한 이미지를 따로 빌드합니다(`FROM foxtrot/control-plane` + `COPY seed.yaml /srv/config/seed.yaml`).
+- EFS에 두고 마운트합니다.
+
+시드에서 실제 배포와 반드시 맞춰야 하는 값:
+
+| 시드 항목 | 맞출 대상 |
+| --- | --- |
+| `environments.*.actors` | 앱의 `WORKLOAD_ACTOR` 이름과 실제 프로세스 수. uvicorn `--workers 4`면 4. 다르면 DB 단계가 `HOLD_TIMEOUT`으로 멈춤 |
+| `environments.*.trafficPool` | 트래픽 서비스 `CF_POOL_IDS`의 환경 이름 (`aws`, `gcp`) |
+| `environments.*.appUrl` | 플랫폼에서 닿는 앱의 사설 주소. 업무 검사가 이 주소를 부름 |
+| `adapters.*.url` | 이전 서버 세 개의 내부 주소 |
+| `adapters.database.verify` | DB 이전 서버가 HTTPS이므로 인증서를 검증함. 사설 CA면 CA 파일 경로를 적고 그 파일도 넣음 |
+| `probe.groupbuyId` | 앱에 만든 업무 검사 전용 상품 |
 
 ### DynamoDB 테이블
 
 | 속성 | 값 |
 | --- | --- |
+| 이름 | `foxtrot-control-plane` (`CONTROL_PLANE_TABLE_NAME`) |
 | 파티션 키 | `pk` (String) |
 | 정렬 키 | `sk` (String) |
 | 과금 | On-demand |
+
+DB 이전 서버의 DynamoDB 테이블에도 씁니다. 업무 정지 근거를 기록하기 위해서입니다. 테이블 이름과 namespace는 DB 이전 서버 담당에게 받습니다.
+
+### 환경 변수
+
+`[비밀]`은 Secrets Manager에서 ECS가 환경 변수로 넣습니다. 이름을 바꾸고 싶으면 각 `*_SECRET` 설정에 `env:다른이름`을 적습니다. `aws:<시크릿 ID>`를 적으면 control-plane이 Secrets Manager에서 직접 읽습니다.
+
+| 변수 | 값 | 비고 |
+| --- | --- | --- |
+| `CONTROL_PLANE_ENVIRONMENT` | `production` | 기본값. `local`은 개발용 |
+| `CONTROL_PLANE_REGION` | `ap-northeast-2` | DynamoDB, Secrets Manager 리전 |
+| `CONTROL_PLANE_TABLE_NAME` | `foxtrot-control-plane` | |
+| `CONTROL_PLANE_DB_GATE_TABLE` | DB 이전 서버 테이블 이름 | 없으면 DB 전환 불가 |
+| `CONTROL_PLANE_DB_GATE_NAMESPACE` | `foxtrot-db-operator` | DB 이전 서버와 같은 값 |
+| `CONTROL_PLANE_TRAFFIC_URL` | `http://traffic.internal:8001` | 트래픽 서비스 |
+| `CONTROL_PLANE_PUBLIC_URL` | 콘솔 주소 (예: `https://platform.<도메인>`) | GitHub 로그인 콜백이 `<값>/api/auth/github/callback` |
+| `CONTROL_PLANE_ALLOWED_ORIGINS` | `["https://platform.<도메인>"]` | 콘솔의 Origin만 허용 |
+| `CONTROL_PLANE_GITHUB_CLIENT_ID` | GitHub OAuth 앱 ID | |
+| `CONTROL_PLANE_GITHUB_ALLOWED_IDS` | `[12345, ...]` | 로그인을 허용할 GitHub 숫자 ID |
+| `DB_ADAPTER_TOKEN` [비밀] | DB 이전 서버 토큰 | 시드의 `tokenSecret`과 이름이 같아야 함 |
+| `REDIS_ADAPTER_TOKEN` [비밀] | redis-migrator의 `STATEMIG_ADMIN_TOKEN`과 같은 값 | |
+| `OBJECT_ADAPTER_TOKEN` [비밀] | 오브젝트 이전 서버 토큰 | |
+| `TRAFFIC_SERVICE_TOKEN` [비밀] | 트래픽 서비스의 `TRAFFIC_SERVICE_TOKEN`과 같은 값 | |
+| `WORKLOAD_TOKEN` [비밀] | 앱의 `WORKLOAD_TOKEN`과 같은 값 | 앱 heartbeat 인증 |
+| `GITHUB_CLIENT_SECRET` [비밀] | GitHub OAuth 앱 시크릿 | |
+
+`production`에서는 메모리 저장소와 로그인 생략이 거절됩니다. 이전 서버의 TLS 검증을 끄는 것도 거절됩니다.
+
+### 헬스체크
+
+인증 없이 `GET /health`가 `{"status":"ok"}`를 돌려줍니다. 이미지에 Docker `HEALTHCHECK`가 들어 있고, ECS 컨테이너 헬스체크로는 같은 명령을 씁니다.
+
+```bash
+python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+```
+
+### 망
+
+**들어오는 연결 (8000):**
+
+| 누가 | 경로 | 비고 |
+| --- | --- | --- |
+| 콘솔(platform-frontend) | `/auth/*`, `/v1/*` | 브라우저는 `/api`를 붙여 부르고 게이트웨이가 떼어 냄. Cloudflare Access로 보호 |
+| 앱 VM (AWS, GCP) | `/internal/v1/workloads/*` | 앱 프로세스의 heartbeat. 앱 VPC에서 관리 VPC로 오는 사설 경로 필요 |
+
+`/internal`은 게이트웨이(공개 경로)에 노출하지 않습니다.
+
+**나가는 연결:**
+
+| 대상 | 주소 | 용도 |
+| --- | --- | --- |
+| 이전 서버 세 개 | 시드의 `adapters.*.url` | 공통 API 호출 |
+| 트래픽 서비스 | `traffic.internal:8001` | 가중치 변경 |
+| 앱 VM (AWS, GCP) | 시드의 `appUrl` (8000) | 업무 검사, 카나리 관측. GCP 앱까지 가는 경로(Tailscale, VPN)가 필요 |
+| DynamoDB, Secrets Manager | AWS 엔드포인트 | 상태 저장, 비밀값 (VPC 엔드포인트 또는 NAT) |
+| GitHub | `github.com`, `api.github.com` | 콘솔 로그인. NAT를 통한 인터넷 출구 필요 |
 
 ### 작업 역할 권한
 
 - 플랫폼 테이블의 `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem`, `Query`
 - DB 이전 서버 테이블의 제어 영역 쓰기
-- `secretsmanager:GetSecretValue`: 시드와 설정에 있는 시크릿만 (어댑터 토큰, `TRAFFIC_SERVICE_TOKEN` 등)
+- `secretsmanager:GetSecretValue`: 위 `[비밀]` 값만
 
-앱의 DB, Redis, 버킷에는 권한을 주지 않습니다. 플랫폼은 저장소를 직접 다루지 않습니다.
+앱의 DB, Redis, 버킷에는 권한을 주지 않습니다.
+
+### 배포 순서
+
+1. 이전 서버 세 개와 트래픽 서비스를 먼저 띄웁니다. control-plane은 시작할 때 이들에 닿지 않아도 뜨지만, 워크플로를 만들 때 이전 서버의 `/v1/capabilities`를 대조합니다.
+2. control-plane을 띄우고 `/health`를 확인합니다.
+3. 앱 env에 `CONTROL_PLANE_URL` 등을 넣고 앱을 다시 띄웁니다. 순서를 바꾸면 앱의 `/readyz`가 503이 되어 앱이 LB에서 빠집니다. 앱은 플랫폼의 첫 지시를 받기 전까지 업무를 받지 않기 때문입니다.
 
 ## 설계와 다르게 구현한 부분
 
