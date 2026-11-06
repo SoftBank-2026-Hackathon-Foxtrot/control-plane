@@ -126,7 +126,9 @@ class Timings(Model):
     unknown_retry_limit: int = 3
     dms_unknown_deadline: float = 600
     lease_ttl: float = 15
-    fast_poll_ms: int = 500
+    tick_interval: float = 1.0
+    held_tick_interval: float = 0.1
+    fast_poll_ms: int = 200
     idle_poll_ms: int = 5000
 
 

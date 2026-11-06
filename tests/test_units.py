@@ -230,6 +230,18 @@ async def test_a_restarted_process_learns_of_the_hold_on_its_first_call(world: W
     assert directive.poll_after_ms == world.seed.timings.fast_poll_ms
 
 
+async def test_the_engine_ticks_fast_only_while_the_application_stands_still(
+    world: World,
+) -> None:
+    engine = world.platform.engine
+    timings = world.seed.timings
+    assert await engine.interval() == timings.tick_interval
+    await world.services.coordinator.request_hold("wf")
+    assert await engine.interval() == timings.held_tick_interval
+    await world.services.coordinator.release()
+    assert await engine.interval() == timings.tick_interval
+
+
 async def test_a_repeated_hold_request_stays_in_one_generation(world: World) -> None:
     coordinator = world.services.coordinator
     first = await coordinator.request_hold("wf")

@@ -46,7 +46,7 @@ class Engine:
         self.reconcile = ManualReconcile(runner)
         self.running_evidence = RunningEvidence(services)
 
-    async def run(self, interval: float = 1.0) -> None:
+    async def run(self) -> None:
         while True:
             try:
                 await self.tick()
@@ -54,7 +54,24 @@ class Engine:
                 # The loop must outlive any one bad tick: a stopped loop looks like a healthy,
                 # idle platform while a migration sits half done.
                 log.exception("engine tick failed")
-            await asyncio.sleep(interval)
+            await asyncio.sleep(await self.interval())
+
+    async def interval(self) -> float:
+        """Seconds until the next tick: short while the application stands still.
+
+        Every step of a cutover waits for the next tick, and a command takes three. At one second
+        a tick, the platform alone kept the application stopped for about 12 seconds. Ticking
+        faster only while the hold is in force shortens that without changing what a tick does.
+        """
+        timings = self.services.seed.timings
+        try:
+            hold = await self.services.coordinator.hold()
+        except Exception:
+            log.exception("could not read the hold")
+            return timings.tick_interval
+        if hold.desired is HoldDesired.HOLD:
+            return timings.held_tick_interval
+        return timings.tick_interval
 
     async def tick(self) -> None:
         repo = self.services.repo

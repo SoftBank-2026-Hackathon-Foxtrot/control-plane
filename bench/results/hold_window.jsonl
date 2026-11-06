@@ -1,0 +1,4 @@
+{"run": 10, "pause_max": 11.166, "pause_min": 11.165, "phases": {"HOLD": 6.032, "QUIESCE": 3.036, "CUTOVER": 3.043, "RESUME": 3.052, "RELEASE": 2.007}, "db_commands": ["PREPARE", "START_SYNC", "QUIESCE", "CUTOVER", "RESUME"]}
+{"label": "before", "interval": 1.0, "hold_interval": 1.0, "fast_poll_ms": 500, "runs": 10, "pause_max_median": 11.209, "pause_max_range": [11.143, 11.731]}
+{"run": 10, "pause_max": 1.435, "pause_min": 1.435, "phases": {"HOLD": 5.343, "QUIESCE": 0.327, "CUTOVER": 0.333, "RESUME": 0.332, "RELEASE": 1.111}, "db_commands": ["PREPARE", "START_SYNC", "QUIESCE", "CUTOVER", "RESUME"]}
+{"label": "after", "interval": 1.0, "hold_interval": 0.1, "fast_poll_ms": 200, "runs": 10, "pause_max_median": 1.448, "pause_max_range": [1.435, 1.456]}

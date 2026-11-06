@@ -1,0 +1,21 @@
+{"run": 1, "killed_after": 0.453, "killed_in": "QUIESCE", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.138}
+{"run": 2, "killed_after": 0.211, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.331}
+{"run": 3, "killed_after": 0.911, "killed_in": "CUTOVER", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.475}
+{"run": 4, "killed_after": 0.101, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.306}
+{"run": 5, "killed_after": 0.75, "killed_in": "CUTOVER", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.367}
+{"run": 6, "killed_after": 0.512, "killed_in": "QUIESCE", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 8.859}
+{"run": 7, "killed_after": 0.081, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.271}
+{"run": 8, "killed_after": 0.71, "killed_in": "CUTOVER", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.186}
+{"run": 9, "killed_after": 0.052, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.337}
+{"run": 10, "killed_after": 0.607, "killed_in": "CUTOVER", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.264}
+{"run": 11, "killed_after": 0.098, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.383}
+{"run": 12, "killed_after": 0.127, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.304}
+{"run": 13, "killed_after": 0.594, "killed_in": "QUIESCE", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.567}
+{"run": 14, "killed_after": 1.158, "killed_in": "RESUME", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 15.963}
+{"run": 15, "killed_after": 0.173, "killed_in": "HOLD", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.383}
+{"run": 16, "killed_after": 0.313, "killed_in": "QUIESCE", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 9.124}
+{"run": 17, "killed_after": 0.878, "killed_in": "CUTOVER", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.181}
+{"run": 18, "killed_after": 1.327, "killed_in": "RELEASE", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 15.729}
+{"run": 19, "killed_after": 0.808, "killed_in": "CUTOVER", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.07}
+{"run": 20, "killed_after": 0.555, "killed_in": "QUIESCE", "status": "RUNNING", "halt": null, "executed": {"QUIESCE": 1, "CUTOVER": 1, "RESUME": 1}, "once_each": true, "pause_max": 16.638}
+{"runs": 20, "restart_delay": 0.0, "recovered": 20, "once_each": 20, "pause_max_median": 12.556, "pause_max_range": [8.859, 16.638]}
