@@ -10,7 +10,14 @@ curl --fail --silent --show-error --location https://pkgs.tailscale.com/stable/u
 apt-get update
 apt-get install -y tailscale=${version}
 %{ if cloud == "aws" ~}
-apt-get install -y awscli
+apt-get install -y unzip
+aws_cli_temp=$(mktemp -d)
+trap 'rm -rf "$aws_cli_temp"' EXIT
+curl --fail --silent --show-error --location \
+  "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" \
+  -o "$aws_cli_temp/awscliv2.zip"
+unzip -q "$aws_cli_temp/awscliv2.zip" -d "$aws_cli_temp"
+"$aws_cli_temp/aws/install" --update
 %{ endif ~}
 cat >/etc/sysctl.d/99-foxtrot-tailscale.conf <<'SYSCTL'
 net.ipv4.ip_forward = 1
