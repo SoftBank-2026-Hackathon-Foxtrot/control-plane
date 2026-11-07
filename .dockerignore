@@ -17,3 +17,5 @@ docs
 !**/*.example.tfvars.json
 infrastructure/provisioner/config.json
 infrastructure/observability/.env
+
+**/.onprem-local

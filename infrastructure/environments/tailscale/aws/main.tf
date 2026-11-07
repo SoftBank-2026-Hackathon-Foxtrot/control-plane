@@ -3,6 +3,14 @@ terraform {
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 6.0" }
   }
+  # One state per routed network. bucket and key come from -backend-config:
+  #   terraform init -backend-config="bucket=foxtrot-provisioner-state-<account>" \
+  #     -backend-config="key=tailscale/<cloud>/<router name>.tfstate"
+  backend "s3" {
+    region       = "ap-northeast-2"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {

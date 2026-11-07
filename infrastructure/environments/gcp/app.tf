@@ -128,6 +128,7 @@ resource "google_secret_manager_secret_iam_member" "app" {
   for_each = merge(
     { app_db = google_secret_manager_secret.app_db.id, db_admin = google_secret_manager_secret.db_admin.id, storage = google_secret_manager_secret.storage.id },
     local.extra_secret_refs,
+    var.tailscale == null ? {} : { TAILSCALE = var.tailscale.auth_key_secret },
   )
   secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
@@ -158,7 +159,10 @@ module "app_runtime" {
     access_key_id = module.iam.hmac_access_id
     secret        = google_secret_manager_secret.storage.id
   }
-
+  tailscale = var.tailscale == null ? null : {
+    auth_key_secret = var.tailscale.auth_key_secret, tag = var.tailscale.tag,
+    routes          = [var.network.subnet_cidr, "${var.network.service_range_address}/${var.network.service_range_prefix}"], hostname = var.deployment_id
+  }
 }
 
 variable "force_destroy_storage" {

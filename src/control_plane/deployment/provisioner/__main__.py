@@ -55,13 +55,31 @@ def build(config: dict, catalog: dict) -> Service:
     executor = DeploymentExecutor(
         terraform, config.get("clouds", {}).get("onprem", {}).get("nodes", {})
     )
-    return Service(
+    service = Service(
         Store(work / "provisioner.db"),
         executor,
         catalog,
         config,
         checker=AppChecker(config.get("readiness"), node_checker=executor.check),
     )
+
+    if config.get("onprem"):
+        from .inventory import Inventory
+        from .onprem import OnPremService
+        from .onprem_store import OnPremStore
+        from .drivers.ansible import AnsibleDriver
+
+        settings = config["onprem"]
+        inventory = Inventory(
+            settings["catalogFile"], settings["secretRoot"],
+            allow_local=settings.get("allowLocal", False),
+        )
+        service.onprem = OnPremService(
+            OnPremStore(work / "provisioner.db"), inventory,
+            AnsibleDriver(HERE.parent, work / "ansible", inventory),
+            service.checker,
+        )
+    return service
 
 
 def request_from(args) -> dict:
@@ -101,6 +119,9 @@ def main() -> None:
         p.add_argument("--plan-only", action="store_true", help="stop after the plan (up only)")
     down = sub.add_parser("down")
     down.add_argument("environment_id")
+    onprem = sub.add_parser("onprem-up", help="create a registered onprem plan or apply request")
+    onprem.add_argument("--request", required=True, help="v2 request JSON file")
+    onprem.add_argument("--idempotency-key", required=True)
     args = parser.parse_args()
     catalog, config = load(args.config)
 
@@ -125,6 +146,17 @@ def main() -> None:
             threading.Thread(target=service.run_forever, args=(stop,), daemon=True).start()
             print(f"provisioner listening on {args.host}:{args.port}", flush=True)
             ProvisionerServer((args.host, args.port), service, token).serve_forever()
+            return
+        if args.command == "onprem-up":
+            if service.onprem is None:
+                raise RequestError("onprem configuration required")
+            _, created = service.onprem.create(json.loads(Path(args.request).read_text()), args.idempotency_key)
+            while service.run_next():
+                pass
+            result = service.onprem.get(created["environmentId"])
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            if result["status"] not in ("PLANNED", "INFRA_READY", "READY"):
+                sys.exit(1)
             return
         if args.command == "up":
             _, created = service.create(request_from(args))

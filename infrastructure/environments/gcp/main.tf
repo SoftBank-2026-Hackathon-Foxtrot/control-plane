@@ -40,7 +40,7 @@ module "firewall" {
   admin_cidrs              = var.admin_cidrs
   proxy_cidrs              = var.proxy_cidrs
   enable_cloudflare_tunnel = var.enable_cloudflare_tunnel
-  enable_tailscale         = false
+  enable_tailscale         = var.tailscale != null
   service_cidr             = "${var.network.service_range_address}/${var.network.service_range_prefix}"
 }
 module "cloud_sql" {

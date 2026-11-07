@@ -29,3 +29,5 @@ override.tf.json
 terraform.rc
 infrastructure/provisioner/config.json
 infrastructure/observability/.env
+
+**/.onprem-local

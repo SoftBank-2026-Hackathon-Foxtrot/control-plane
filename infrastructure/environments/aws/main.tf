@@ -26,7 +26,7 @@ module "security_groups" {
   enable_cloudflare_tunnel = var.enable_cloudflare_tunnel || try(var.app.tunnel_secret, null) != null
   migration_source_cidrs   = var.migration_source_cidrs
   replication_cidrs        = var.replication_cidrs
-  enable_tailscale         = false
+  enable_tailscale         = var.tailscale != null
 }
 module "s3" {
   source        = "../../modules/aws/s3"

@@ -27,6 +27,7 @@ from control_plane.deployment.tools.telemetry import get_telemetry
 from . import spec
 from .readiness import AppChecker
 from .store import Store
+from .drivers.terraform import TerraformDriver
 from .terraform import Terraform, TerraformError
 
 
@@ -60,6 +61,8 @@ class Service:
         self, store: Store, terraform: Terraform, catalog: dict, config: dict, checker=None
     ):
         self.store, self.tf, self.catalog, self.config = store, terraform, catalog, config
+        self.driver = TerraformDriver(terraform)
+        self.onprem = None
         self.checker = checker or AppChecker(config.get("readiness"))
         self.wake = threading.Event()
         self.today = lambda: dt.date.today()
@@ -327,6 +330,9 @@ class Service:
                 error="process stopped while a job was running",
             )
 
+        if self.onprem:
+            self.onprem.recover()
+
     def run_forever(self, stop: threading.Event) -> None:
         def observe():
             while not stop.is_set():
@@ -351,7 +357,7 @@ class Service:
     def run_next(self) -> bool:
         job = self.store.next_queued()
         if not job:
-            return False
+            return self.onprem.run_next() if self.onprem else False
         self.execute(job)
         return True
 

@@ -72,7 +72,7 @@ resource "aws_vpc_endpoint" "gateway" {
 }
 
 # ECS tasks accept private app sources on the explicit proxy/adapter ports below.
-# Shared routers preserve source addresses (SNAT disabled).
+# The gateway source-NATs app traffic today; with shared routers (SNAT disabled) sources arrive as is.
 resource "aws_security_group" "tasks" {
   name_prefix = "${var.name}-tasks-"
   description = "Platform ECS tasks"

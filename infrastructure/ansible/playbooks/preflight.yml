@@ -1,0 +1,55 @@
+- name: Check a registered user-owned Docker host without changing services
+  hosts: foxtrot
+  gather_facts: true
+  tasks:
+    - name: Verify supported host and capacity
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.system == 'Linux'
+          - ansible_facts.architecture == 'x86_64'
+          - ansible_facts.user_uid == foxtrot_uid
+          - ansible_facts.user_gid == foxtrot_gid
+          - ansible_facts.processor_vcpus >= foxtrot_min_cpu
+          - ansible_facts.memtotal_mb >= foxtrot_min_memory_mib
+        quiet: true
+    - name: Check Docker access
+      ansible.builtin.command: docker info --format '{% raw %}{{.ServerVersion}}{% endraw %}'
+      changed_when: false
+      check_mode: false
+    - name: Check Compose availability
+      ansible.builtin.command: docker compose version --short
+      changed_when: false
+      check_mode: false
+    - name: Verify runtime parent filesystem capacity
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - "import pathlib,shutil,sys; p=pathlib.Path(sys.argv[1]); p=next(x for x in [p,*p.parents] if x.exists()); sys.exit(0 if shutil.disk_usage(p).free >= int(sys.argv[2])*1024**3 else 1)"
+          - '{{ foxtrot_base }}'
+          - '{{ foxtrot_min_disk_gib | string }}'
+      changed_when: false
+      check_mode: false
+    - name: Verify host reservation
+      ansible.builtin.script:
+        cmd: "../files/host_guard.py preflight {{ foxtrot_environment_id }} {{ foxtrot_host_id }} {{ foxtrot_config_digest }} --root {{ foxtrot_base | quote }}"
+        executable: python3
+      register: reservation
+      changed_when: false
+      check_mode: false
+    - name: Check that new service ports are free
+      ansible.builtin.wait_for:
+        host: '{{ foxtrot_service_address }}'
+        port: '{{ item }}'
+        state: stopped
+        timeout: 1
+      loop: '{{ foxtrot_ports }}'
+      when: not (reservation.stdout | from_json).claimed
+      check_mode: false
+    - name: Check declared peer reachability
+      ansible.builtin.wait_for:
+        host: '{{ item.host }}'
+        port: '{{ item.port }}'
+        timeout: 5
+      loop: '{{ foxtrot_network_checks }}'
+      check_mode: false

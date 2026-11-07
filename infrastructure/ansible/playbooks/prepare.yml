@@ -1,0 +1,36 @@
+- name: Prepare registered data services
+  hosts: foxtrot
+  gather_facts: false
+  tasks:
+    - name: Claim runtime directory before writing credentials
+      ansible.builtin.script:
+        cmd: "../files/host_guard.py claim {{ foxtrot_environment_id }} {{ foxtrot_host_id }} {{ foxtrot_config_digest }} --root {{ foxtrot_base | quote }}"
+        executable: python3
+    - name: Install fixed service bundle
+      ansible.builtin.copy:
+        src: '{{ foxtrot_bundle_dir }}/'
+        dest: '{{ foxtrot_root }}/'
+        mode: preserve
+        directory_mode: '0700'
+      no_log: true
+    - name: Create persistent data directories
+      ansible.builtin.file:
+        path: '{{ foxtrot_root }}/data/{{ item }}'
+        state: directory
+        mode: '0700'
+      loop: '{{ foxtrot_services }}'
+    - name: Start owned services and wait for health
+      ansible.builtin.command:
+        argv: [docker, compose, -f, '{{ foxtrot_root }}/compose.json', up, -d, --wait, --wait-timeout, '180']
+      when: foxtrot_services | length > 0
+      no_log: true
+    - name: Create database roles and grants without application tables
+      ansible.builtin.command:
+        argv: [docker, compose, -f, '{{ foxtrot_root }}/compose.json', exec, -T, postgres, sh, /opt/foxtrot/postgres-roles.sh]
+      when: "'postgres' in foxtrot_services"
+      no_log: true
+    - name: Prepare the empty S3 bucket
+      ansible.builtin.command:
+        argv: [python3, '{{ foxtrot_root }}/scripts/bucket.py', '{{ foxtrot_root }}', '{{ foxtrot_service_address }}']
+      when: "'seaweedfs' in foxtrot_services"
+      no_log: true

@@ -76,7 +76,7 @@ run "root_wiring" {
     error_message = "PG17 with logical replication, private DB and a plain-RESP cache (Redis proxy) are the defaults."
   }
 }
-run "tailscale_uses_a_separate_shared_router" {
+run "tailscale_makes_the_vm_a_router" {
   command = apply
   variables {
     deployment_id             = "fox-aws-poc01"

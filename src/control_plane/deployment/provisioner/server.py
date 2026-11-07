@@ -23,6 +23,8 @@ from .spec import RequestError
 
 ENV = re.compile(r"^/v1/environments/(env-[a-f0-9]{12})(/apply|/update|/check-app|/workflow)?$")
 JOB = re.compile(r"^/v1/jobs/(job-[a-f0-9]{12})$")
+ENV2 = re.compile(r"^/v2/environments/(env-[a-f0-9]{12})(?:/(plan|apply|check-app|workflow|reconcile))?$")
+JOB2 = re.compile(r"^/v2/jobs/(job-[a-f0-9]{12})$")
 MAX_BODY = 64 * 1024
 
 
@@ -63,8 +65,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        if length > MAX_BODY:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise RequestError("invalid Content-Length") from None
+        if not 0 <= length <= MAX_BODY:
             raise RequestError("body too large")
         try:
             return json.loads(self.rfile.read(length) or b"{}")
@@ -79,6 +84,27 @@ class Handler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(given, self.server.authorization):
             raise PermissionError
         service: Service = self.server.service
+        if path.startswith("/v2/"):
+            if service.onprem is None:
+                raise Conflict("ONPREM_NOT_CONFIGURED", "register the onprem catalog and credential directory first")
+            if path == "/v2/environments":
+                if self.command == "POST":
+                    result = service.onprem.create(self.body(), self.headers.get("Idempotency-Key"))
+                    service.wake.set()
+                    return result
+                if self.command == "GET":
+                    return 200, {"environments": service.onprem.environments()}
+            if m := ENV2.fullmatch(path):
+                env_id, action = m.groups()
+                if action and self.command == "POST":
+                    result = service.onprem.command(env_id, action, self.body(), self.headers.get("Idempotency-Key"))
+                    service.wake.set()
+                    return result
+                if action is None and self.command == "GET":
+                    return 200, service.onprem.get(env_id)
+            if (m := JOB2.fullmatch(path)) and self.command == "GET":
+                return 200, service.onprem.job(m.group(1))
+            raise NotFound(f"{self.command} {path}")
         if path == "/v1/templates" and self.command == "GET":
             return 200, {
                 "templates": {k: v["description"] for k, v in service.catalog["templates"].items()},

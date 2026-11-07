@@ -36,7 +36,7 @@ cat > /usr/local/sbin/foxtrot-tailscale.sh <<'EOF'
 set -e
 KEY=$(/usr/local/sbin/foxtrot-secret.sh '${tailscale_key}')
 tailscale up --authkey="$KEY" --hostname=${hostname} --advertise-tags=tag:mgmt \
-  --advertise-routes=${vpc_cidr} --accept-routes --snat-subnet-routes=false --accept-dns=false --reset
+  --advertise-routes=${vpc_cidr} --accept-routes --accept-dns=false --reset
 iptables -t mangle -C FORWARD -o tailscale0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null \
   || iptables -t mangle -A FORWARD -o tailscale0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 EOF

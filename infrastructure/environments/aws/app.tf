@@ -119,7 +119,10 @@ module "app_runtime" {
   }
   redis_url = "${local.redis_transit_encryption ? "rediss" : "redis"}://${module.elasticache.endpoint}:${module.elasticache.port}"
   storage   = { bucket = module.s3.bucket_id, region = var.region }
-
+  tailscale = var.tailscale == null ? null : {
+    auth_key_secret = var.tailscale.auth_key_secret, tag = var.tailscale.tag,
+    routes          = [var.network.vpc_cidr], hostname = var.deployment_id
+  }
 }
 
 variable "force_destroy_storage" {

@@ -1,0 +1,19 @@
+- name: Inspect actual registered services
+  hosts: foxtrot
+  gather_facts: false
+  tasks:
+    - name: Inspect ownership, pinned images and service health
+      ansible.builtin.script:
+        cmd: "../files/host_guard.py inspect {{ foxtrot_environment_id }} {{ foxtrot_host_id }} {{ foxtrot_config_digest }} --root {{ foxtrot_base | quote }}"
+        executable: python3
+      register: evidence
+      changed_when: false
+    - name: Check declared peer reachability
+      ansible.builtin.wait_for:
+        host: '{{ item.host }}'
+        port: '{{ item.port }}'
+        timeout: 5
+      loop: '{{ foxtrot_network_checks }}'
+    - name: Publish preparation evidence
+      ansible.builtin.debug:
+        msg: '{{ evidence.stdout | from_json }}'
