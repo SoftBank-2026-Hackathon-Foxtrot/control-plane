@@ -44,6 +44,11 @@ variable "environment" {
   type    = map(string)
   default = {}
 }
+variable "redis_environment" {
+  description = "Redis-only runtime options, such as an explicit application command contract."
+  type        = map(string)
+  default     = {}
+}
 variable "telemetry_secrets" {
   type    = map(string)
   default = {}
@@ -70,7 +75,7 @@ locals {
   db_secrets = merge(var.db_runtime_secrets, var.telemetry_secrets, {
     DB_OPERATOR_API_TOKEN = var.db_api_token_secret_arn
   })
-  redis_env = merge(var.environment, {
+  redis_env = merge(var.environment, var.redis_environment, {
     AWS_DEFAULT_REGION         = var.region
     STATEMIG_CONTROL_FILE      = "/state/control.json"
     STATEMIG_PROXY             = "http://127.0.0.1:7000"
