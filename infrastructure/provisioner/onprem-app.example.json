@@ -1,0 +1,50 @@
+{
+  "name": "Home PC",
+  "expectedServedBy": "onprem",
+  "imagePrefixes": [
+    "ghcr.io/softbank-2026-hackathon-foxtrot/"
+  ],
+  "dnsServers": [
+    "10.30.0.2"
+  ],
+  "environment": {
+    "CONTROL_PLANE_URL": "http://control-plane.internal:8000",
+    "WORKLOAD_SCOPE": "scope:goods",
+    "DATABASE_URL": "postgresql://app_writer:__APP_DB_PASSWORD__@db-proxy.internal:6432/appdb",
+    "REDIS_URL": "redis://redis-proxy.internal:6379",
+    "OBJECT_MIGRATION_SERVER": "http://object-migration.internal:8080",
+    "OBJECT_MIGRATION_ID_FILE": "/tmp/object-migration-id",
+    "S3_REGION": "ap-northeast-2",
+    "S3_BUCKET": "REPLACE_WITH_ACTIVE_SOURCE_BUCKET",
+    "S3_FALLBACK_BUCKET": "REPLACE_WITH_ACTIVE_SOURCE_BUCKET"
+  },
+  "apiEnvironment": {
+    "WORKLOAD_ACTOR": "goods-onprem-api"
+  },
+  "workerEnvironment": {
+    "WORKLOAD_ACTOR": "goods-onprem-worker"
+  },
+  "networkChecks": [
+    {
+      "name": "heartbeat",
+      "host": "control-plane.internal",
+      "port": 8000
+    },
+    {
+      "name": "db-proxy",
+      "host": "db-proxy.internal",
+      "port": 6432
+    },
+    {
+      "name": "redis-proxy",
+      "host": "redis-proxy.internal",
+      "port": 6379
+    },
+    {
+      "name": "object-route",
+      "host": "object-migration.internal",
+      "port": 8080
+    }
+  ],
+  "readinessDeadlineSeconds": 180
+}

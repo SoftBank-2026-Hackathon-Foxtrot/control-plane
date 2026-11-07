@@ -95,30 +95,7 @@
       "images": {
         "chiikawa-groupbuy": "registry.internal/apps/chiikawa-groupbuy:latest"
       },
-      "nodes": {
-        "lab": {
-          "dockerHost": "ssh://deployer@node.internal",
-          "network": "foxtrot",
-          "bindAddress": "127.0.0.1",
-          "appUrl": "http://node.internal",
-          "imagePrefixes": [
-            "registry.internal/apps/"
-          ],
-          "environment": {
-            "DATABASE_URL": "postgresql+psycopg://app_writer:__APP_DB_PASSWORD__@postgres:5432/app",
-            "DB_ADMIN_HOST": "postgres",
-            "DB_ADMIN_PORT": "5432",
-            "DB_ADMIN_USER": "postgres",
-            "DB_ADMIN_DATABASE": "app",
-            "DB_APP_ROLE": "app_writer",
-            "REDIS_URL": "redis://redis:6379"
-          },
-          "secretEnv": {
-            "APP_DB_PASSWORD": "ONPREM_APP_DB_PASSWORD",
-            "DB_ADMIN_PASSWORD": "ONPREM_DB_ADMIN_PASSWORD"
-          }
-        }
-      }
+      "nodes": {}
     }
   },
   "readiness": {

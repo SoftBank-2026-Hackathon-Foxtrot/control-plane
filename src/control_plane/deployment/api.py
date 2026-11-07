@@ -104,11 +104,14 @@ async def deploy(
         if not isinstance(workflow_id, str):
             raise ApiError(422, "INVALID_DEPLOYMENT", "workflowId must be a string")
         workflow = await context.repo.workflow(workflow_id)
-        if (
-            workflow is None
-            or workflow.created_by != str(session.user.id)
-            or workflow.application != application_id
-        ):
+        if workflow is None or workflow.application != application_id:
+            raise ApiError(404, "NOT_FOUND", "workflow not found")
+        owner = workflow.created_by
+        if body.get("cloud") == "onprem":
+            if workflow.target_env != "onprem":
+                raise ApiError(404, "NOT_FOUND", "workflow not found")
+            owner = workflow.created_by_id or workflow.created_by
+        if owner != session.user.id:
             raise ApiError(404, "NOT_FOUND", "workflow not found")
     payload = dict(body)
     payload["org"] = {"id": org_id(str(session.user.id), application_id), "name": application_id}

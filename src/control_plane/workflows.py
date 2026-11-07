@@ -64,6 +64,7 @@ class WorkflowService:
         source_env: str,
         target_env: str,
         actor: str,
+        actor_id: str | None = None,
         resources: dict[ResourceKind, EndpointPair] | None = None,
         target_configuration: PreparedTargetConfiguration | None = None,
     ) -> Workflow:
@@ -85,6 +86,7 @@ class WorkflowService:
             source_env=source_env,
             target_env=target_env,
             created_by=actor,
+            created_by_id=actor_id,
             created_at=self.clock.now(),
             target_configuration=target_configuration,
         )

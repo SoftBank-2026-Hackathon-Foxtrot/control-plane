@@ -13,4 +13,5 @@ otlp:
     - foxtrot.owner.id
     - foxtrot.deployment.id
     - foxtrot.workload.kind
+    - host.name
   translation_strategy: UnderscoreEscapingWithSuffixes

@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from control_plane.deployment.api import APP_TEMPLATE, org_id
+from control_plane.deployment.provisioner.node_config import resolve
 from control_plane.deployment.provisioner.service import Service
 from control_plane.deployment.provisioner.store import Store
+from tests.deployment.test_node import node_config as node_config  # pytest fixture
 from tests.deployment.test_provisioner import CATALOG, CONFIG, FakeTerraform, ReadyChecker
 from tests.test_api import Console
 from tests.test_api import console as console
@@ -20,7 +22,9 @@ DEPLOY = "/v1/applications/goods/deployments"
 
 
 @pytest.fixture
-async def deployment_console(console: Console, tmp_path: Path) -> AsyncIterator[Console]:
+async def deployment_console(
+    console: Console, tmp_path: Path, node_config: dict
+) -> AsyncIterator[Console]:
     engine = Service(
         Store(tmp_path / "provisioner.db"),
         FakeTerraform(tmp_path),
@@ -28,6 +32,11 @@ async def deployment_console(console: Console, tmp_path: Path) -> AsyncIterator[
         copy.deepcopy(CONFIG),
         checker=ReadyChecker(),
     )
+    node = node_config["clouds"]["onprem"]["nodes"]["pc"]
+    node["orgs"] = [org_id("github:4242", "goods")]
+    node["imagePrefixes"] = ["registry.internal/apps/"]
+    engine.config["clouds"]["onprem"]["nodes"] = {"lab": node}
+    engine.tf.resolve = lambda spec: resolve(engine.config["clouds"]["onprem"]["nodes"], spec)
     console.app.state.deployment_service = engine
     await console.login()
     yield console
@@ -59,6 +68,82 @@ async def test_registration_removed_and_old_registration_not_listed(
     )
     assert response.status_code == 405
     assert await console.world.table.get("USER#github:4242", "APPLICATION#new-app") is None
+
+
+@pytest.mark.parametrize("action", ["reconcile", "destroy"])
+@pytest.mark.parametrize("cloud", ["aws", "gcp"])
+async def test_onprem_recovery_does_not_mutate_cloud_deployments(deployment_console, action, cloud):
+    console = deployment_console
+    engine = console.app.state.deployment_service
+    created = await console.http.post(
+        DEPLOY, json={"cloud": cloud}, headers=console.change_headers()
+    )
+    drain(engine)
+    env_id = created.json()["environmentId"]
+    before = engine.store.environment(env_id)
+    calls = list(engine.tf.calls)
+    response = await console.http.post(
+        f"/v1/provisioning/environments/{env_id}/{action}",
+        json={},
+        headers=console.change_headers(),
+    )
+    assert (response.status_code, response.json()["code"]) == (404, "NOT_FOUND")
+    assert engine.tf.calls == calls
+    assert engine.store.environment(env_id) == before
+
+
+async def test_failed_onprem_registration_leaves_cloud_api_available(deployment_console):
+    console = deployment_console
+    engine = console.app.state.deployment_service
+    engine.onprem_error = "ONPREM_CONFIGURATION_UNAVAILABLE"
+    engine.config["clouds"].pop("onprem")
+    response = await console.http.get("/v1/applications/goods/deployment-targets")
+    assert response.status_code == 503
+    assert response.json()["code"] == "ONPREM_CONFIGURATION_UNAVAILABLE"
+    response = await console.http.post(
+        DEPLOY, json={"cloud": "onprem"}, headers=console.change_headers()
+    )
+    assert response.status_code == 503
+    for cloud in ("aws", "gcp"):
+        response = await console.http.post(
+            DEPLOY, json={"cloud": cloud}, headers=console.change_headers()
+        )
+        assert response.status_code == 202, response.text
+        drain(engine)
+        result = await console.http.get(response.headers["Location"])
+        assert result.status_code == 200 and result.json()["status"] == "SUCCEEDED"
+
+
+@pytest.mark.parametrize(("source", "target"), [("aws", "gcp"), ("gcp", "aws")])
+async def test_cloud_workflow_keeps_its_wire_format_and_deployment_permissions(
+    deployment_console: Console, source: str, target: str
+) -> None:
+    console = deployment_console
+    created = await console.http.post(
+        "/v1/workflows",
+        json={"sourceEnv": source, "targetEnv": target},
+        headers=console.change_headers(),
+    )
+    assert created.status_code == 201, created.text
+    workflow = created.json()["workflow"]
+    assert workflow["createdBy"] == "hyunsu"
+    assert "createdById" not in workflow
+    row = await console.world.table.get("WORKFLOW#" + workflow["id"], "META")
+    assert row is not None and "createdById" not in json.loads(row.body)
+    # The earlier branch persisted this field. It must not grant cloud deployment access.
+    previous = json.loads(row.body) | {"createdById": "github:4242"}
+    await console.world.table.put(
+        row.pk, row.sk, json.dumps(previous), expected_version=row.version
+    )
+    read = await console.http.get("/v1/workflows/" + workflow["id"])
+    assert read.status_code == 200 and "createdById" not in read.json()["workflow"]
+    for cloud in (target, "onprem"):
+        denied = await console.http.post(
+            DEPLOY,
+            json={"cloud": cloud, "workflowId": workflow["id"]},
+            headers=console.change_headers(),
+        )
+        assert (denied.status_code, denied.json()["code"]) == (404, "NOT_FOUND")
 
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "onprem"])

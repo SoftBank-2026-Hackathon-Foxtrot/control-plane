@@ -40,6 +40,7 @@ from control_plane.public_probe import PublicProbeLoop
 from control_plane.seed import Seed, load_seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import DynamoTable, MemoryTable, Table
+from control_plane.system_metrics import router as system_metrics_router
 from control_plane.telemetry import TraceMiddleware, get_telemetry
 from control_plane.telemetry_query import router as telemetry_router
 from control_plane.traffic import TrafficController, TrafficService
@@ -278,11 +279,14 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
         )
     app.state.ai_service = platform.ai_service
     from control_plane.deployment.api import router as deployment_router
+    from control_plane.deployment.onprem_api import router as onprem_router
 
+    app.include_router(onprem_router)
     app.include_router(deployment_router)
     app.include_router(router)
     app.include_router(otel_router)
     app.include_router(telemetry_router)
+    app.include_router(system_metrics_router)
     from control_plane.security_review.api import router as security_review_router
 
     app.include_router(security_review_router)
