@@ -1,0 +1,2260 @@
+{
+ "source": "foxtrot-control-plane and foxtrot-db-operator DynamoDB tables, read 2026-11-08 13:10 KST",
+ "workflows": [
+  {
+   "id": "wf-a6541981",
+   "direction": "aws -> gcp",
+   "status": "COMPLETED",
+   "createdAt": "2026-11-07T11:50:56.564561Z",
+   "finishedAt": "2026-11-07T12:44:52.181208Z",
+   "halt": null,
+   "stages": [
+    {
+     "kind": "PREPARE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T11:50:57.612274Z",
+     "finishedAt": "2026-11-07T11:51:01.158242Z",
+     "data": {}
+    },
+    {
+     "kind": "SYNC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T11:51:02.191956Z",
+     "finishedAt": "2026-11-07T11:51:09.349486Z",
+     "data": {}
+    },
+    {
+     "kind": "OBJECT_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T11:51:10.452682Z",
+     "finishedAt": "2026-11-07T12:30:19.672644Z",
+     "data": {
+      "resumed_at": "2026-11-07T11:57:41.500460+00:00",
+      "stable_since": "2026-11-07T12:29:49.016087+00:00",
+      "observed_at": "2026-11-07T12:30:19.665255+00:00"
+     }
+    },
+    {
+     "kind": "CANARY",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T12:30:20.718571Z",
+     "finishedAt": "2026-11-07T12:31:25.920767Z",
+     "data": {}
+    },
+    {
+     "kind": "REDIS_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T12:38:27.667910Z",
+     "finishedAt": "2026-11-07T12:39:41.395840Z",
+     "data": {
+      "resumed_at": "2026-11-07T12:38:43.964943+00:00",
+      "stable_since": "2026-11-07T12:39:10.282654+00:00",
+      "observed_at": "2026-11-07T12:39:41.389186+00:00"
+     }
+    },
+    {
+     "kind": "DATABASE_CUTOVER",
+     "status": "SKIPPED",
+     "startedAt": null,
+     "finishedAt": "2026-11-07T12:39:42.509383Z"
+    },
+    {
+     "kind": "TRAFFIC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T12:39:43.554952Z",
+     "finishedAt": "2026-11-07T12:42:54.524079Z",
+     "data": {}
+    },
+    {
+     "kind": "FINALIZE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T12:44:47.488472Z",
+     "finishedAt": "2026-11-07T12:44:52.166662Z",
+     "data": {}
+    }
+   ],
+   "commands": [
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:50:57.698817Z",
+     "updatedAt": "2026-11-07T11:50:59.880078Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:50:59.975407Z",
+     "updatedAt": "2026-11-07T11:51:01.149019Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:51:02.214220Z",
+     "updatedAt": "2026-11-07T11:51:03.329885Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:51:03.357761Z",
+     "updatedAt": "2026-11-07T11:51:04.512637Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:57:30.550141Z",
+     "updatedAt": "2026-11-07T11:57:31.966289Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:57:33.094340Z",
+     "updatedAt": "2026-11-07T11:57:36.259075Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T11:57:37.309031Z",
+     "updatedAt": "2026-11-07T11:57:40.468434Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T12:38:35.263662Z",
+     "updatedAt": "2026-11-07T12:38:35.773061Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T12:38:36.374838Z",
+     "updatedAt": "2026-11-07T12:38:37.956445Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T12:38:39.562994Z",
+     "updatedAt": "2026-11-07T12:38:41.278475Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "FINALIZE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T12:44:47.593888Z",
+     "updatedAt": "2026-11-07T12:44:50.273531Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "FINALIZE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T12:44:50.563091Z",
+     "updatedAt": "2026-11-07T12:44:52.056988Z"
+    }
+   ],
+   "traffic": [
+    {
+     "at": "2026-11-07T12:30:20.725155Z",
+     "requested": {
+      "aws": 95,
+      "gcp": 5
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T12:39:43.611004Z",
+     "requested": {
+      "aws": 75,
+      "gcp": 25
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T12:40:47.246576Z",
+     "requested": {
+      "aws": 50,
+      "gcp": 50
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T12:41:50.989660Z",
+     "requested": {
+      "aws": 0,
+      "gcp": 100
+     },
+     "verified": true
+    }
+   ],
+   "events": [
+    {
+     "at": "2026-11-07T11:53:10.639835Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "OBJECT_STORAGE",
+     "message": "NOT_READY_FOR_CUTOVER: 10 of 12 apps follow the route"
+    },
+    {
+     "at": "2026-11-07T11:57:27.409203Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T12:02:42.874423Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "OBJECT_STORAGE",
+     "message": "ADVANCE_CONDITIONS_NOT_MET: OBJECT_STORAGE did not settle after the switch"
+    },
+    {
+     "at": "2026-11-07T12:29:47.414256Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T12:30:24.847309Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T12:31:24.880795Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T12:39:42.515475Z",
+     "type": "STAGE_SKIPPED",
+     "resource": null,
+     "message": "DATABASE_CUTOVER"
+    },
+    {
+     "at": "2026-11-07T12:39:45.668833Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T12:40:46.199436Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T12:40:49.470937Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T12:41:49.869962Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T12:41:53.081494Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T12:42:53.482166Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T12:44:52.270824Z",
+     "type": "WORKFLOW_COMPLETED",
+     "resource": null,
+     "message": ""
+    }
+   ],
+   "businessProbes": {
+    "aws": {
+     "total": 127,
+     "failed": 64
+    },
+    "gcp": {
+     "total": 127,
+     "failed": 52
+    }
+   },
+   "lightProbes": {
+    "aws": {
+     "total": 454,
+     "failed": 0
+    },
+    "gcp": {
+     "total": 454,
+     "failed": 0
+    }
+   },
+   "resources": {
+    "OBJECT_STORAGE": {
+     "migrationId": "om-2aa4c86de231ad71",
+     "initialCopy": {
+      "completed": 1,
+      "total": 1,
+      "unit": "objects",
+      "bytes": 157,
+      "totalBytes": 157
+     },
+     "appsLive": 12,
+     "readiness": {
+      "result": "PASS",
+      "checks": [
+       {
+        "name": "changes_arrive",
+        "ok": true,
+        "message": "canary event arrived in 1.135s"
+       },
+       {
+        "name": "backlog",
+        "ok": true,
+        "message": "0 changes waiting, limit 100"
+       },
+       {
+        "name": "lag",
+        "ok": true,
+        "message": "no changes in the last round"
+       },
+       {
+        "name": "target_matches_source",
+        "ok": true,
+        "message": "0 missing (0 written in the last 30s), 0 different, 0 only in target, 1 identical, checked 15s ago"
+       }
+      ]
+     }
+    },
+    "REDIS": {
+     "migrationId": "mig-483693fe8fa7",
+     "proxy": {
+      "gen": 1,
+      "paused": false,
+      "inflight_writes": 0,
+      "open_tx": 0,
+      "last_pause_ms": 100.674,
+      "pubsub_sessions": 0,
+      "pubsub_moved": 0,
+      "pubsub_cut": 0,
+      "pubsub_dropped": 0,
+      "observedAt": "2026-11-07T12:44:50Z"
+     },
+     "drainStatus": "SUCCEEDED"
+    }
+   }
+  },
+  {
+   "id": "wf-55a54889",
+   "direction": "aws -> gcp",
+   "status": "COMPLETED",
+   "createdAt": "2026-11-07T14:58:49.370257Z",
+   "finishedAt": "2026-11-07T15:46:56.097083Z",
+   "halt": null,
+   "stages": [
+    {
+     "kind": "PREPARE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T14:58:50.264555Z",
+     "finishedAt": "2026-11-07T15:01:24.590085Z",
+     "data": {}
+    },
+    {
+     "kind": "SYNC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T15:01:25.633612Z",
+     "finishedAt": "2026-11-07T15:01:30.471191Z",
+     "data": {}
+    },
+    {
+     "kind": "OBJECT_CUTOVER",
+     "status": "SKIPPED",
+     "startedAt": null,
+     "finishedAt": "2026-11-07T15:01:31.516358Z"
+    },
+    {
+     "kind": "CANARY",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T15:01:32.563384Z",
+     "finishedAt": "2026-11-07T15:02:36.654757Z",
+     "data": {}
+    },
+    {
+     "kind": "REDIS_CUTOVER",
+     "status": "SKIPPED",
+     "startedAt": null,
+     "finishedAt": "2026-11-07T15:02:37.704317Z"
+    },
+    {
+     "kind": "DATABASE_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T15:05:10.177246Z",
+     "finishedAt": "2026-11-07T15:06:11.454655Z",
+     "data": {
+      "evidence_at": "2026-11-07T15:05:20.384073+00:00",
+      "resumed_at": "2026-11-07T15:05:27.084334+00:00"
+     }
+    },
+    {
+     "kind": "TRAFFIC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T15:06:12.499507Z",
+     "finishedAt": "2026-11-07T15:09:24.571348Z",
+     "data": {}
+    },
+    {
+     "kind": "FINALIZE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T15:22:31.320832Z",
+     "finishedAt": "2026-11-07T15:46:56.079392Z",
+     "data": {}
+    }
+   ],
+   "commands": [
+    {
+     "resource": "DATABASE",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "FAILED",
+     "createdAt": "2026-11-07T14:58:51.924093Z",
+     "updatedAt": "2026-11-07T14:58:54.195199Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_1",
+     "attempt": 1,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T14:58:55.299550Z",
+     "updatedAt": "2026-11-07T14:58:56.454849Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_2",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:01:09.869094Z",
+     "updatedAt": "2026-11-07T15:01:11.166406Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "PREPARE",
+     "attempt": 2,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:01:22.236771Z",
+     "updatedAt": "2026-11-07T15:01:24.577564Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:01:25.665650Z",
+     "updatedAt": "2026-11-07T15:01:27.917989Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:05:11.859662Z",
+     "updatedAt": "2026-11-07T15:05:13.667909Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:05:20.698109Z",
+     "updatedAt": "2026-11-07T15:05:24.339189Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:05:24.535353Z",
+     "updatedAt": "2026-11-07T15:05:25.725629Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_3",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:44:06.961679Z",
+     "updatedAt": "2026-11-07T15:44:09.308789Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "FINALIZE",
+     "attempt": 40,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T15:46:53.828995Z",
+     "updatedAt": "2026-11-07T15:46:55.892476Z"
+    }
+   ],
+   "traffic": [
+    {
+     "at": "2026-11-07T15:01:32.569290Z",
+     "requested": {
+      "aws": 95,
+      "gcp": 5
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T15:06:12.522892Z",
+     "requested": {
+      "aws": 75,
+      "gcp": 25
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T15:07:17.278548Z",
+     "requested": {
+      "aws": 50,
+      "gcp": 50
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T15:08:20.915554Z",
+     "requested": {
+      "aws": 0,
+      "gcp": 100
+     },
+     "verified": true
+    }
+   ],
+   "events": [
+    {
+     "at": "2026-11-07T14:58:54.218846Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "PRECONDITION_FAILED: PREPARE: 원본 단독 운영 상태가 필요합니다."
+    },
+    {
+     "at": "2026-11-07T15:01:09.459528Z",
+     "type": "RECONCILE",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T15:01:19.212481Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T15:01:31.522376Z",
+     "type": "STAGE_SKIPPED",
+     "resource": null,
+     "message": "OBJECT_CUTOVER"
+    },
+    {
+     "at": "2026-11-07T15:01:34.806565Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T15:02:35.614205Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T15:02:37.710701Z",
+     "type": "STAGE_SKIPPED",
+     "resource": null,
+     "message": "REDIS_CUTOVER"
+    },
+    {
+     "at": "2026-11-07T15:06:15.938167Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T15:07:16.198592Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T15:07:19.530979Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T15:08:19.880763Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T15:08:22.906435Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T15:09:23.126568Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T15:44:05.917508Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "PRECONDITION_FAILED: FINALIZE: 최신 업무·안정화·역복제 확인이 필요합니다."
+    },
+    {
+     "at": "2026-11-07T15:46:52.842624Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T15:46:56.188216Z",
+     "type": "WORKFLOW_COMPLETED",
+     "resource": null,
+     "message": ""
+    }
+   ],
+   "businessProbes": {
+    "aws": {
+     "total": 166,
+     "failed": 7
+    },
+    "gcp": {
+     "total": 166,
+     "failed": 5
+    }
+   },
+   "lightProbes": {
+    "aws": {
+     "total": 449,
+     "failed": 2
+    },
+    "gcp": {
+     "total": 450,
+     "failed": 0
+    }
+   },
+   "resources": {
+    "DATABASE": {
+     "migrationId": "mig-c8fdaf9586e84783a245a528452cac5d",
+     "lifecycle": "COMPLETED",
+     "forwardBarrier": {
+      "committedThroughLsn": "5/44008B30",
+      "durableOriginLsn": "5/44008C18",
+      "id": "2a1bbd74-fe06-41e0-95db-92573f834070",
+      "migrationId": "mig-c8fdaf9586e84783a245a528452cac5d",
+      "successorId": "ff0e1829-2943-4ad1-b5a3-4611360be744",
+      "transitionId": "tx-wf-55a54889-database"
+     },
+     "validationEvidence": {
+      "barrierId": "2a1bbd74-fe06-41e0-95db-92573f834070",
+      "checkedCount": null,
+      "committedThroughLsn": "5/44008B30",
+      "durableOriginLsn": "5/44008C18",
+      "evidenceKind": "HISTORICAL_OPERATION",
+      "method": "NATIVE_DURABLE_BARRIER",
+      "mismatchCount": null,
+      "observedAt": "2026-11-07T15:05:23.256284Z",
+      "operationId": "op-a523449062f0406f99b1f2261e3e1ed1",
+      "result": "PASS",
+      "scope": "REGISTERED_TABLES_AND_SEQUENCES",
+      "transitionId": "tx-wf-55a54889-database"
+     },
+     "lastCutover": null
+    }
+   }
+  },
+  {
+   "id": "wf-b0ad384a",
+   "direction": "gcp -> aws",
+   "status": "ABORTED",
+   "createdAt": "2026-11-07T19:39:16.031025Z",
+   "finishedAt": "2026-11-07T19:58:52.725472Z",
+   "halt": {
+    "code": "REPLICATION_CONFLICT",
+    "message": "START_SYNC: 등록한 복제 연결이 변경됐습니다.",
+    "blockers": [
+     "RECONCILE_REQUIRED"
+    ],
+    "resource": "DATABASE",
+    "at": "2026-11-07T19:58:16.383281Z"
+   },
+   "stages": [
+    {
+     "kind": "PREPARE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T19:39:17.056388Z",
+     "finishedAt": "2026-11-07T19:52:41.033519Z",
+     "data": {}
+    },
+    {
+     "kind": "SYNC",
+     "status": "HALTED",
+     "startedAt": "2026-11-07T19:52:42.082318Z",
+     "finishedAt": null,
+     "data": {}
+    },
+    {
+     "kind": "OBJECT_CUTOVER",
+     "status": "PENDING",
+     "startedAt": null,
+     "finishedAt": null
+    },
+    {
+     "kind": "CANARY",
+     "status": "PENDING",
+     "startedAt": null,
+     "finishedAt": null
+    },
+    {
+     "kind": "REDIS_CUTOVER",
+     "status": "PENDING",
+     "startedAt": null,
+     "finishedAt": null
+    },
+    {
+     "kind": "DATABASE_CUTOVER",
+     "status": "PENDING",
+     "startedAt": null,
+     "finishedAt": null
+    },
+    {
+     "kind": "TRAFFIC",
+     "status": "PENDING",
+     "startedAt": null,
+     "finishedAt": null
+    },
+    {
+     "kind": "FINALIZE",
+     "status": "PENDING",
+     "startedAt": null,
+     "finishedAt": null
+    }
+   ],
+   "commands": [
+    {
+     "resource": "DATABASE",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "FAILED",
+     "createdAt": "2026-11-07T19:49:06.470742Z",
+     "updatedAt": "2026-11-07T19:49:08.761204Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_2",
+     "attempt": 1,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:49:09.894363Z",
+     "updatedAt": "2026-11-07T19:49:11.058602Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_3",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:50:59.026611Z",
+     "updatedAt": "2026-11-07T19:51:00.363809Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "PREPARE",
+     "attempt": 2,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:52:37.112633Z",
+     "updatedAt": "2026-11-07T19:52:41.020093Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:52:42.114730Z",
+     "updatedAt": "2026-11-07T19:52:47.137097Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~1.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:52:45.465026Z",
+     "updatedAt": "2026-11-07T19:52:47.025246Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 2,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:52:48.612923Z",
+     "updatedAt": "2026-11-07T19:52:53.533300Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~2.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:52:51.100027Z",
+     "updatedAt": "2026-11-07T19:52:53.475900Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 3,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:52:54.600176Z",
+     "updatedAt": "2026-11-07T19:53:00.305587Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~3.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:52:57.956012Z",
+     "updatedAt": "2026-11-07T19:53:00.240179Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 4,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:53:01.392319Z",
+     "updatedAt": "2026-11-07T19:53:07.120298Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~4.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:53:04.774248Z",
+     "updatedAt": "2026-11-07T19:53:07.048441Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 5,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:53:08.195459Z",
+     "updatedAt": "2026-11-07T19:53:14.813555Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~5.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:53:11.623201Z",
+     "updatedAt": "2026-11-07T19:53:14.519393Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 6,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:53:16.269704Z",
+     "updatedAt": "2026-11-07T19:53:20.289853Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~6.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:53:18.540810Z",
+     "updatedAt": "2026-11-07T19:53:20.233195Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 7,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:53:21.360950Z",
+     "updatedAt": "2026-11-07T19:53:27.023843Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~7.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:53:24.708658Z",
+     "updatedAt": "2026-11-07T19:53:26.965823Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 8,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:53:28.091466Z",
+     "updatedAt": "2026-11-07T19:53:32.689225Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~8.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:53:30.362688Z",
+     "updatedAt": "2026-11-07T19:53:32.631843Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 9,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:54:50.814158Z",
+     "updatedAt": "2026-11-07T19:54:56.502394Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~9.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:54:54.171499Z",
+     "updatedAt": "2026-11-07T19:54:56.446030Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 10,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:54:57.567327Z",
+     "updatedAt": "2026-11-07T19:55:03.374736Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~10.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:00.945969Z",
+     "updatedAt": "2026-11-07T19:55:03.315332Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 11,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:55:04.444284Z",
+     "updatedAt": "2026-11-07T19:55:08.419363Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~11.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:06.720569Z",
+     "updatedAt": "2026-11-07T19:55:08.361128Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 12,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:55:09.488862Z",
+     "updatedAt": "2026-11-07T19:55:14.173036Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~12.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:11.759374Z",
+     "updatedAt": "2026-11-07T19:55:14.058454Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 13,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:55:15.250208Z",
+     "updatedAt": "2026-11-07T19:55:21.008290Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~13.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:18.672325Z",
+     "updatedAt": "2026-11-07T19:55:20.953932Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 14,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:55:22.153155Z",
+     "updatedAt": "2026-11-07T19:55:26.748798Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~14.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:24.426134Z",
+     "updatedAt": "2026-11-07T19:55:26.694979Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 15,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:55:27.817057Z",
+     "updatedAt": "2026-11-07T19:55:32.419499Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~15.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:30.099579Z",
+     "updatedAt": "2026-11-07T19:55:32.365598Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 16,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T19:55:33.492770Z",
+     "updatedAt": "2026-11-07T19:55:37.627165Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~16.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:55:35.827997Z",
+     "updatedAt": "2026-11-07T19:55:37.567503Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_4",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:57:53.759070Z",
+     "updatedAt": "2026-11-07T19:57:56.055425Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 17,
+     "status": "FAILED",
+     "createdAt": "2026-11-07T19:58:14.129855Z",
+     "updatedAt": "2026-11-07T19:58:16.364974Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_5",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T19:58:17.477203Z",
+     "updatedAt": "2026-11-07T19:58:19.782244Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "CANCEL",
+     "attempt": 1,
+     "status": null,
+     "createdAt": "2026-11-07T19:58:51.233061Z",
+     "updatedAt": "2026-11-07T19:58:51.328544Z"
+    }
+   ],
+   "traffic": [],
+   "events": [
+    {
+     "at": "2026-11-07T19:39:17.319862Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": null,
+     "message": "IDEMPOTENCY_CONFLICT: 같은 키에 다른 본문입니다."
+    },
+    {
+     "at": "2026-11-07T19:49:04.358450Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T19:49:08.812315Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "PRECONDITION_FAILED: PREPARE: 되돌아갈 대상은 writer 차단·연결 0건이어야 하고 앱 경로는 원본이어야 합니다."
+    },
+    {
+     "at": "2026-11-07T19:50:58.651021Z",
+     "type": "RECONCILE",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T19:52:36.513049Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T19:53:33.753223Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "COMMAND_ATTEMPTS_EXHAUSTED: START_SYNC did not go through after 8 attempts"
+    },
+    {
+     "at": "2026-11-07T19:54:50.343390Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T19:55:38.702861Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "COMMAND_ATTEMPTS_EXHAUSTED: START_SYNC did not go through after 8 attempts"
+    },
+    {
+     "at": "2026-11-07T19:57:52.654773Z",
+     "type": "RECONCILE",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T19:58:13.165458Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T19:58:16.389181Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "REPLICATION_CONFLICT: START_SYNC: 등록한 복제 연결이 변경됐습니다."
+    }
+   ],
+   "businessProbes": {},
+   "lightProbes": {},
+   "resources": {
+    "DATABASE": {
+     "migrationId": "mig-be2c0d60cf374190a61c645b2ee24c5a",
+     "lifecycle": "CANCELLED",
+     "forwardBarrier": null,
+     "validationEvidence": null,
+     "lastCutover": null
+    }
+   }
+  },
+  {
+   "id": "wf-32f75936",
+   "direction": "gcp -> aws",
+   "status": "COMPLETED",
+   "createdAt": "2026-11-07T20:23:02.735949Z",
+   "finishedAt": "2026-11-07T20:44:16.516712Z",
+   "halt": null,
+   "stages": [
+    {
+     "kind": "PREPARE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:23:03.752523Z",
+     "finishedAt": "2026-11-07T20:23:09.955282Z",
+     "data": {}
+    },
+    {
+     "kind": "SYNC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:23:11.001548Z",
+     "finishedAt": "2026-11-07T20:30:56.533724Z",
+     "data": {}
+    },
+    {
+     "kind": "OBJECT_CUTOVER",
+     "status": "SKIPPED",
+     "startedAt": null,
+     "finishedAt": "2026-11-07T20:30:57.584198Z"
+    },
+    {
+     "kind": "CANARY",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:30:58.636982Z",
+     "finishedAt": "2026-11-07T20:32:03.088891Z",
+     "data": {}
+    },
+    {
+     "kind": "REDIS_CUTOVER",
+     "status": "SKIPPED",
+     "startedAt": null,
+     "finishedAt": "2026-11-07T20:32:04.133284Z"
+    },
+    {
+     "kind": "DATABASE_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:35:28.128259Z",
+     "finishedAt": "2026-11-07T20:36:29.151966Z",
+     "data": {
+      "evidence_at": "2026-11-07T20:35:38.527782+00:00",
+      "resumed_at": "2026-11-07T20:35:48.842939+00:00"
+     }
+    },
+    {
+     "kind": "TRAFFIC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:36:30.237947Z",
+     "finishedAt": "2026-11-07T20:39:46.042076Z",
+     "data": {}
+    },
+    {
+     "kind": "FINALIZE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:44:12.151341Z",
+     "finishedAt": "2026-11-07T20:44:16.504949Z",
+     "data": {}
+    }
+   ],
+   "commands": [
+    {
+     "resource": "DATABASE",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:23:04.291880Z",
+     "updatedAt": "2026-11-07T20:23:09.942579Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:23:11.037815Z",
+     "updatedAt": "2026-11-07T20:23:21.604284Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~1.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:23:20.278564Z",
+     "updatedAt": "2026-11-07T20:23:21.546380Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 2,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:23:22.669370Z",
+     "updatedAt": "2026-11-07T20:23:30.879978Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~2.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:23:29.195094Z",
+     "updatedAt": "2026-11-07T20:23:30.822890Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 3,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:23:31.954150Z",
+     "updatedAt": "2026-11-07T20:23:40.735620Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~3.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:23:38.731611Z",
+     "updatedAt": "2026-11-07T20:23:40.522202Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 4,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:23:42.115548Z",
+     "updatedAt": "2026-11-07T20:23:50.983609Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~4.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:23:49.315058Z",
+     "updatedAt": "2026-11-07T20:23:50.926491Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 5,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:23:52.050540Z",
+     "updatedAt": "2026-11-07T20:24:00.932036Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~5.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:23:58.584864Z",
+     "updatedAt": "2026-11-07T20:24:00.872951Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 6,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:24:02.393037Z",
+     "updatedAt": "2026-11-07T20:24:10.442248Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~6.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:24:08.801396Z",
+     "updatedAt": "2026-11-07T20:24:10.384967Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 7,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:24:11.514500Z",
+     "updatedAt": "2026-11-07T20:24:20.397781Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~7.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:24:18.057349Z",
+     "updatedAt": "2026-11-07T20:24:20.334772Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 8,
+     "status": "UNKNOWN",
+     "createdAt": "2026-11-07T20:24:21.464814Z",
+     "updatedAt": "2026-11-07T20:24:29.814099Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC~8.0",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:24:27.990378Z",
+     "updatedAt": "2026-11-07T20:24:29.534115Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "MANUAL_RECONCILE_1",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:30:09.550082Z",
+     "updatedAt": "2026-11-07T20:30:11.286954Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 9,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:30:29.171146Z",
+     "updatedAt": "2026-11-07T20:30:35.790824Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:35:29.679791Z",
+     "updatedAt": "2026-11-07T20:35:31.331674Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:35:39.024914Z",
+     "updatedAt": "2026-11-07T20:35:42.841708Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:35:44.734399Z",
+     "updatedAt": "2026-11-07T20:35:46.828413Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "FINALIZE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T20:44:12.577021Z",
+     "updatedAt": "2026-11-07T20:44:16.477113Z"
+    }
+   ],
+   "traffic": [
+    {
+     "at": "2026-11-07T20:30:58.643577Z",
+     "requested": {
+      "gcp": 95,
+      "aws": 5
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T20:36:30.265523Z",
+     "requested": {
+      "gcp": 75,
+      "aws": 25
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T20:37:36.044862Z",
+     "requested": {
+      "gcp": 50,
+      "aws": 50
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T20:38:40.442919Z",
+     "requested": {
+      "gcp": 0,
+      "aws": 100
+     },
+     "verified": true
+    }
+   ],
+   "events": [
+    {
+     "at": "2026-11-07T20:24:31.124450Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "COMMAND_ATTEMPTS_EXHAUSTED: START_SYNC did not go through after 8 attempts"
+    },
+    {
+     "at": "2026-11-07T20:30:08.366995Z",
+     "type": "RECONCILE",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T20:30:28.495588Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T20:30:57.590840Z",
+     "type": "STAGE_SKIPPED",
+     "resource": null,
+     "message": "OBJECT_CUTOVER"
+    },
+    {
+     "at": "2026-11-07T20:31:01.879094Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T20:32:02.028780Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T20:32:04.138876Z",
+     "type": "STAGE_SKIPPED",
+     "resource": null,
+     "message": "REDIS_CUTOVER"
+    },
+    {
+     "at": "2026-11-07T20:36:32.552540Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T20:37:34.845421Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T20:37:38.491350Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T20:38:39.388219Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T20:38:42.578802Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T20:39:43.045899Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T20:44:16.532277Z",
+     "type": "WORKFLOW_COMPLETED",
+     "resource": null,
+     "message": ""
+    }
+   ],
+   "businessProbes": {
+    "aws": {
+     "total": 53,
+     "failed": 0
+    },
+    "gcp": {
+     "total": 53,
+     "failed": 1
+    }
+   },
+   "lightProbes": {
+    "aws": {
+     "total": 456,
+     "failed": 0
+    },
+    "gcp": {
+     "total": 457,
+     "failed": 5
+    }
+   },
+   "resources": {
+    "DATABASE": {
+     "migrationId": "mig-e68de5f21bcf4af7a17bcd3ad71ebaed",
+     "lifecycle": "COMPLETED",
+     "forwardBarrier": {
+      "committedThroughLsn": "3/3C0115E8",
+      "durableOriginLsn": "3/3C0116D0",
+      "id": "7ac56b1d-975b-48c3-924a-736e59ecad7c",
+      "migrationId": "mig-e68de5f21bcf4af7a17bcd3ad71ebaed",
+      "successorId": "e702428d-6d8f-489b-9a90-89accd7fdadc",
+      "transitionId": "tx-wf-32f75936-database"
+     },
+     "validationEvidence": {
+      "barrierId": "7ac56b1d-975b-48c3-924a-736e59ecad7c",
+      "checkedCount": null,
+      "committedThroughLsn": "3/3C0115E8",
+      "durableOriginLsn": "3/3C0116D0",
+      "evidenceKind": "HISTORICAL_OPERATION",
+      "method": "NATIVE_DURABLE_BARRIER",
+      "mismatchCount": null,
+      "observedAt": "2026-11-07T20:35:40.478790Z",
+      "operationId": "op-60e5c8f919fe4dc591b75127af1ef8cd",
+      "result": "PASS",
+      "scope": "REGISTERED_TABLES_AND_SEQUENCES",
+      "transitionId": "tx-wf-32f75936-database"
+     },
+     "lastCutover": {
+      "allowWriterMs": 74,
+      "barrierMs": 290,
+      "checksMs": 233,
+      "disableMs": 78,
+      "fenceMs": 176,
+      "operationId": "op-60e5c8f919fe4dc591b75127af1ef8cd",
+      "pauseMs": 104,
+      "rerouteMs": 113,
+      "resumeChecksMs": 65,
+      "resumeMs": 179,
+      "retireMs": 407,
+      "steps": [
+       {
+        "atMs": 0,
+        "step": "start"
+       },
+       {
+        "atMs": 233,
+        "step": "pgbouncer.pause"
+       },
+       {
+        "atMs": 338,
+        "step": "paused"
+       },
+       {
+        "atMs": 342,
+        "step": "pg.fence_writer"
+       },
+       {
+        "atMs": 514,
+        "step": "held"
+       },
+       {
+        "atMs": 557,
+        "step": "pg.commit_barrier"
+       },
+       {
+        "atMs": 654,
+        "step": "pg.commit_barrier_successor"
+       },
+       {
+        "atMs": 804,
+        "step": "barrier"
+       },
+       {
+        "atMs": 812,
+        "step": "pg.disable_subscription"
+       },
+       {
+        "atMs": 881,
+        "step": "disabled"
+       },
+       {
+        "atMs": 983,
+        "step": "quiesced"
+       },
+       {
+        "atMs": 1024,
+        "step": "pg.retire_publication"
+       },
+       {
+        "atMs": 1104,
+        "step": "pg.retire_slot"
+       },
+       {
+        "atMs": 1214,
+        "step": "pgbouncer.atomic_config"
+       },
+       {
+        "atMs": 1291,
+        "step": "pgbouncer.reload"
+       },
+       {
+        "atMs": 1390,
+        "step": "rerouted"
+       },
+       {
+        "atMs": 1503,
+        "step": "switched"
+       },
+       {
+        "atMs": 1568,
+        "step": "pg.allow_writer"
+       },
+       {
+        "atMs": 1642,
+        "step": "pgbouncer.resume"
+       },
+       {
+        "atMs": 1821,
+        "step": "resumed"
+       },
+       {
+        "atMs": 1863,
+        "step": "end"
+       }
+      ],
+      "totalMs": 1863,
+      "validateMs": 102,
+      "writePauseMs": 1409
+     }
+    }
+   }
+  },
+  {
+   "id": "wf-93f2a371",
+   "direction": "aws -> gcp",
+   "status": "COMPLETED",
+   "createdAt": "2026-11-07T20:53:17.847565Z",
+   "finishedAt": "2026-11-07T21:31:18.497451Z",
+   "halt": null,
+   "stages": [
+    {
+     "kind": "PREPARE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T20:53:22.812312Z",
+     "finishedAt": "2026-11-07T21:16:51.634058Z",
+     "data": {}
+    },
+    {
+     "kind": "SYNC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:16:52.667485Z",
+     "finishedAt": "2026-11-07T21:17:01.613977Z",
+     "data": {}
+    },
+    {
+     "kind": "OBJECT_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:17:02.648513Z",
+     "finishedAt": "2026-11-07T21:18:14.042731Z",
+     "data": {
+      "resumed_at": "2026-11-07T21:17:14.817922+00:00",
+      "stable_since": "2026-11-07T21:17:43.831639+00:00",
+      "observed_at": "2026-11-07T21:18:14.038177+00:00"
+     }
+    },
+    {
+     "kind": "CANARY",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:18:15.074206Z",
+     "finishedAt": "2026-11-07T21:19:19.817956Z",
+     "data": {}
+    },
+    {
+     "kind": "REDIS_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:20:11.697311Z",
+     "finishedAt": "2026-11-07T21:21:20.459659Z",
+     "data": {
+      "resumed_at": "2026-11-07T21:20:21.186906+00:00",
+      "stable_since": "2026-11-07T21:20:50.430641+00:00",
+      "observed_at": "2026-11-07T21:21:20.455422+00:00"
+     }
+    },
+    {
+     "kind": "DATABASE_CUTOVER",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:21:21.491068Z",
+     "finishedAt": "2026-11-07T21:22:16.027012Z",
+     "data": {
+      "evidence_at": "2026-11-07T21:21:31.784919+00:00",
+      "resumed_at": "2026-11-07T21:21:38.290476+00:00"
+     }
+    },
+    {
+     "kind": "TRAFFIC",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:22:17.114861Z",
+     "finishedAt": "2026-11-07T21:30:55.776611Z",
+     "data": {}
+    },
+    {
+     "kind": "FINALIZE",
+     "status": "PASSED",
+     "startedAt": "2026-11-07T21:31:10.439180Z",
+     "finishedAt": "2026-11-07T21:31:18.487263Z",
+     "data": {}
+    }
+   ],
+   "commands": [
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:16:44.399943Z",
+     "updatedAt": "2026-11-07T21:16:46.564024Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:16:46.684593Z",
+     "updatedAt": "2026-11-07T21:16:47.879123Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "PREPARE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:16:48.257225Z",
+     "updatedAt": "2026-11-07T21:16:51.625272Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:16:52.690305Z",
+     "updatedAt": "2026-11-07T21:16:53.776554Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:16:53.807489Z",
+     "updatedAt": "2026-11-07T21:16:54.992964Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "START_SYNC",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:16:55.544299Z",
+     "updatedAt": "2026-11-07T21:16:57.766925Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:17:05.150564Z",
+     "updatedAt": "2026-11-07T21:17:06.241972Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:17:07.290187Z",
+     "updatedAt": "2026-11-07T21:17:09.582585Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:17:10.631018Z",
+     "updatedAt": "2026-11-07T21:17:13.784585Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:20:18.286645Z",
+     "updatedAt": "2026-11-07T21:20:18.607870Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:20:18.850293Z",
+     "updatedAt": "2026-11-07T21:20:19.484706Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:20:19.661620Z",
+     "updatedAt": "2026-11-07T21:20:19.989750Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "QUIESCE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:21:22.983442Z",
+     "updatedAt": "2026-11-07T21:21:25.252984Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "CUTOVER",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:21:32.141513Z",
+     "updatedAt": "2026-11-07T21:21:35.390111Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "RESUME_TARGET",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:21:35.565136Z",
+     "updatedAt": "2026-11-07T21:21:36.995753Z"
+    },
+    {
+     "resource": "OBJECT_STORAGE",
+     "slot": "FINALIZE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:31:10.466519Z",
+     "updatedAt": "2026-11-07T21:31:13.638963Z"
+    },
+    {
+     "resource": "REDIS",
+     "slot": "FINALIZE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:31:13.675492Z",
+     "updatedAt": "2026-11-07T21:31:15.332976Z"
+    },
+    {
+     "resource": "DATABASE",
+     "slot": "FINALIZE",
+     "attempt": 1,
+     "status": "SUCCEEDED",
+     "createdAt": "2026-11-07T21:31:15.365127Z",
+     "updatedAt": "2026-11-07T21:31:18.445890Z"
+    }
+   ],
+   "traffic": [
+    {
+     "at": "2026-11-07T21:18:15.078904Z",
+     "requested": {
+      "aws": 95,
+      "gcp": 5
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T21:22:17.321420Z",
+     "requested": {
+      "aws": 75,
+      "gcp": 25
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T21:22:36.126916Z",
+     "requested": {
+      "aws": 95,
+      "gcp": 5
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T21:27:43.002689Z",
+     "requested": {
+      "aws": 75,
+      "gcp": 25
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T21:28:48.596215Z",
+     "requested": {
+      "aws": 50,
+      "gcp": 50
+     },
+     "verified": true
+    },
+    {
+     "at": "2026-11-07T21:29:52.420268Z",
+     "requested": {
+      "aws": 0,
+      "gcp": 100
+     },
+     "verified": true
+    }
+   ],
+   "events": [
+    {
+     "at": "2026-11-07T20:53:23.237447Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": "DATABASE",
+     "message": "BINDING_ROUTE_MISMATCH: the application uses db:chiikawa-aws-3e3d, not db:chiikawa-gcp-1975"
+    },
+    {
+     "at": "2026-11-07T21:16:43.893015Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T21:18:18.668052Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T21:19:18.790517Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 5%"
+    },
+    {
+     "at": "2026-11-07T21:22:20.627206Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T21:22:38.253321Z",
+     "type": "TRAFFIC_REVERTED",
+     "resource": null,
+     "message": "back to target 5%: 2 failed requests on the target"
+    },
+    {
+     "at": "2026-11-07T21:22:38.271391Z",
+     "type": "WORKFLOW_HALTED",
+     "resource": null,
+     "message": "TRAFFIC_GATE_FAILED: 2 failed requests on the target"
+    },
+    {
+     "at": "2026-11-07T21:27:42.213026Z",
+     "type": "RESUME",
+     "resource": null,
+     "message": ""
+    },
+    {
+     "at": "2026-11-07T21:27:46.742559Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T21:28:47.418310Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 25%"
+    },
+    {
+     "at": "2026-11-07T21:28:50.725025Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T21:29:51.396855Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 50%"
+    },
+    {
+     "at": "2026-11-07T21:29:54.577698Z",
+     "type": "TRAFFIC_CHANGED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T21:30:54.751182Z",
+     "type": "TRAFFIC_GATE_PASSED",
+     "resource": null,
+     "message": "target 100%"
+    },
+    {
+     "at": "2026-11-07T21:31:18.509677Z",
+     "type": "WORKFLOW_COMPLETED",
+     "resource": null,
+     "message": ""
+    }
+   ],
+   "businessProbes": {
+    "aws": {
+     "total": 52,
+     "failed": 1
+    },
+    "gcp": {
+     "total": 52,
+     "failed": 1
+    }
+   },
+   "lightProbes": {
+    "aws": {
+     "total": 1018,
+     "failed": 4
+    },
+    "gcp": {
+     "total": 1025,
+     "failed": 16
+    }
+   },
+   "resources": {
+    "DATABASE": {
+     "migrationId": "mig-c1ad87739bd44e1fa5cb0e4c7d1582dc",
+     "lifecycle": "COMPLETED",
+     "forwardBarrier": {
+      "committedThroughLsn": "6/70062098",
+      "durableOriginLsn": "6/70062180",
+      "id": "d2cf42cd-6a94-41d6-9ee4-e57ca104223f",
+      "migrationId": "mig-c1ad87739bd44e1fa5cb0e4c7d1582dc",
+      "successorId": "624cc25f-fda9-4556-ac90-39911bbe7ade",
+      "transitionId": "tx-wf-93f2a371-database"
+     },
+     "validationEvidence": {
+      "barrierId": "d2cf42cd-6a94-41d6-9ee4-e57ca104223f",
+      "checkedCount": null,
+      "committedThroughLsn": "6/70062098",
+      "durableOriginLsn": "6/70062180",
+      "evidenceKind": "HISTORICAL_OPERATION",
+      "method": "NATIVE_DURABLE_BARRIER",
+      "mismatchCount": null,
+      "observedAt": "2026-11-07T21:21:33.524575Z",
+      "operationId": "op-8decf8435d4b429080b7eb3b17e923af",
+      "result": "PASS",
+      "scope": "REGISTERED_TABLES_AND_SEQUENCES",
+      "transitionId": "tx-wf-93f2a371-database"
+     },
+     "lastCutover": {
+      "allowWriterMs": 96,
+      "barrierMs": 277,
+      "checksMs": 272,
+      "disableMs": 82,
+      "fenceMs": 170,
+      "operationId": "op-8decf8435d4b429080b7eb3b17e923af",
+      "pauseMs": 122,
+      "rerouteMs": 77,
+      "resumeChecksMs": 80,
+      "resumeMs": 275,
+      "retireMs": 435,
+      "steps": [
+       {
+        "atMs": 0,
+        "step": "start"
+       },
+       {
+        "atMs": 272,
+        "step": "pgbouncer.pause"
+       },
+       {
+        "atMs": 394,
+        "step": "paused"
+       },
+       {
+        "atMs": 398,
+        "step": "pg.fence_writer"
+       },
+       {
+        "atMs": 564,
+        "step": "held"
+       },
+       {
+        "atMs": 616,
+        "step": "pg.commit_barrier"
+       },
+       {
+        "atMs": 698,
+        "step": "pg.commit_barrier_successor"
+       },
+       {
+        "atMs": 842,
+        "step": "barrier"
+       },
+       {
+        "atMs": 852,
+        "step": "pg.disable_subscription"
+       },
+       {
+        "atMs": 924,
+        "step": "disabled"
+       },
+       {
+        "atMs": 1029,
+        "step": "quiesced"
+       },
+       {
+        "atMs": 1067,
+        "step": "pg.retire_publication"
+       },
+       {
+        "atMs": 1141,
+        "step": "pg.retire_slot"
+       },
+       {
+        "atMs": 1254,
+        "step": "pgbouncer.atomic_config"
+       },
+       {
+        "atMs": 1328,
+        "step": "pgbouncer.reload"
+       },
+       {
+        "atMs": 1464,
+        "step": "rerouted"
+       },
+       {
+        "atMs": 1541,
+        "step": "switched"
+       },
+       {
+        "atMs": 1622,
+        "step": "pg.allow_writer"
+       },
+       {
+        "atMs": 1718,
+        "step": "pgbouncer.resume"
+       },
+       {
+        "atMs": 1993,
+        "step": "resumed"
+       },
+       {
+        "atMs": 2033,
+        "step": "end"
+       }
+      ],
+      "totalMs": 2033,
+      "validateMs": 105,
+      "writePauseMs": 1446
+     }
+    },
+    "OBJECT_STORAGE": {
+     "migrationId": "om-0064d2b386bd1a45",
+     "initialCopy": {
+      "completed": 691,
+      "total": 691,
+      "unit": "objects",
+      "bytes": 101630,
+      "totalBytes": 101630
+     },
+     "appsLive": 12,
+     "readiness": {
+      "result": "PASS",
+      "checks": [
+       {
+        "name": "changes_arrive",
+        "ok": true,
+        "message": "canary event arrived in 920ms"
+       },
+       {
+        "name": "backlog",
+        "ok": true,
+        "message": "0 changes waiting, limit 100"
+       },
+       {
+        "name": "lag",
+        "ok": true,
+        "message": "no changes in the last round"
+       },
+       {
+        "name": "target_matches_source",
+        "ok": true,
+        "message": "0 missing (0 written in the last 30s), 0 different, 0 only in target, 691 identical, checked 11s ago"
+       }
+      ]
+     }
+    },
+    "REDIS": {
+     "migrationId": "mig-f962ef05bc17",
+     "proxy": {
+      "gen": 3,
+      "paused": false,
+      "inflight_writes": 0,
+      "open_tx": 0,
+      "last_pause_ms": 121.233,
+      "pubsub_sessions": 2,
+      "pubsub_moved": 2,
+      "pubsub_cut": 0,
+      "pubsub_dropped": 0,
+      "observedAt": "2026-11-07T21:31:14Z"
+     },
+     "drainStatus": "SUCCEEDED"
+    }
+   }
+  }
+ ]
+}
