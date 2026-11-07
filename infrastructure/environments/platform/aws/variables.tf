@@ -96,3 +96,19 @@ variable "observability" {
   })
   default = null
 }
+
+variable "onprem_planning" {
+  description = "Show the independent on-prem planning backend in the application console."
+  type        = bool
+  default     = false
+}
+
+variable "onprem_plan_actors" {
+  description = "Process counts for deployments linked to an independent on-prem plan."
+  type        = map(number)
+  default     = {}
+  validation {
+    condition     = alltrue([for count in values(var.onprem_plan_actors) : count >= 1 && count <= 8 && count == floor(count)])
+    error_message = "Each actor needs one to eight processes."
+  }
+}

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request, Response
 
 from control_plane.api.dependencies import CheckedSession, Context, CurrentSession, checked_change
 from control_plane.errors import ApiError
+from control_plane.onprem_plans import ONPREM_PREFIX
 
 from .api import call, fixed_application, org_id, service
 
@@ -127,7 +128,10 @@ async def application_recovery(
         raise ApiError(404, "NOT_FOUND", "unknown provisioning endpoint")
     action = request.url.path.rsplit("/", 1)[-1]
     if action == "destroy" and (workflow_id := env["request"].get("workflowId")):
-        workflow = await context.repo.workflow(workflow_id)
+        if workflow_id.startswith(ONPREM_PREFIX):
+            workflow = (await context.onprem_plans.get(workflow_id, session.user.id)).workflow
+        else:
+            workflow = await context.repo.workflow(workflow_id)
         if workflow is None or not workflow.status.terminal:
             raise ApiError(409, "WORKFLOW_BOUND", "finish the migration before removing its app")
     code, result = await call(
