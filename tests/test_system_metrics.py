@@ -186,8 +186,12 @@ async def test_live_deployments_match_owner_cloud_and_recent_heartbeat(world, mo
                 "resultType": "vector",
                 "result": [
                     {
-                        "metric": {"deployment_id": dep, "deployment_environment_name": env},
-                        "value": [0, 1],
+                        "metric": {
+                            "foxtrot_owner_id": records["env-own-aws"]["org_id"],
+                            "deployment_id": dep,
+                            "deployment_environment_name": env,
+                        },
+                        "value": [0, world.clock.now().timestamp() - 1],
                     }
                     for dep, env in [
                         ("deploy-one", "aws"),
@@ -235,3 +239,143 @@ async def test_fresh_instances_are_not_hidden_by_old_exporters(world, monkeypatc
             "/v1/applications/goods/system-metrics/instances?deployment=env-own-aws"
         )
         assert any(row["id"] == "live" and not row["stale"] for row in response.json()["instances"])
+
+
+def register_shared(world):
+    from control_plane.seed import Seed
+
+    ctx = world.platform.context
+    seed = ctx.seed.model_dump(by_alias=True)
+    seed["systemDeployments"] = [
+        {
+            "environmentId": "env-123456789abc",
+            "deploymentId": "goods-shared-aws",
+            "ownerId": "shared-org",
+            "environment": "aws",
+        },
+        {
+            "environmentId": "env-abcdef123456",
+            "deploymentId": "goods-shared-gcp",
+            "ownerId": "shared-org",
+            "environment": "gcp",
+        },
+    ]
+    world.platform.context = replace(ctx, seed=Seed.model_validate(seed))
+
+
+async def test_shared_metrics_work_without_embedded_provisioner_and_reject_other_targets(
+    world, monkeypatch
+):
+    register_shared(world)
+    seen = []
+
+    async def backend(http, url, path, params):
+        seen.append(params["query"])
+        return "OK", {"status": "success", "data": {"resultType": "matrix", "result": []}}
+
+    monkeypatch.setattr(metrics, "read_backend", backend)
+    async with await client_for(world) as client:
+        client._transport.app.state.deployment_service = None
+        root = "/v1/applications/goods/system-metrics"
+        response = await client.get(
+            root, params={"deployment": "shared:env-123456789abc", "instance": "api-1"}
+        )
+        assert response.status_code == 200
+        assert seen and all(
+            'foxtrot_owner_id="shared-org"' in query
+            and 'deployment_id="goods-shared-aws"' in query
+            and 'deployment_environment_name="aws"' in query
+            and 'service_instance_id="api-1"' in query
+            for query in seen
+        )
+        for deployment in ["env-123456789abc", "shared:env-000000000000", "env-other"]:
+            assert (
+                await client.get(root, params={"deployment": deployment, "instance": "api-1"})
+            ).status_code == 404
+        assert (
+            await client.get(
+                root.replace("goods", "other"),
+                params={"deployment": "shared:env-123456789abc", "instance": "api-1"},
+            )
+        ).status_code == 404
+    async with await client_for(world, False) as client:
+        assert (
+            await client.get(
+                root, params={"deployment": "shared:env-123456789abc", "instance": "api-1"}
+            )
+        ).status_code == 401
+
+
+async def test_shared_discovery_validates_full_identity_and_keeps_personal_access(
+    world, monkeypatch
+):
+    register_shared(world)
+    own = deployment_records()["env-own-aws"]
+    own["status"] = "READY"
+    queries = []
+
+    async def backend(http, url, path, params):
+        queries.append(params["query"])
+        identities = [
+            ("shared-org", "goods-shared-aws", "aws", 1),
+            ("shared-org", "unregistered", "aws", 1),
+            ("wrong-owner", "goods-shared-aws", "aws", 1),
+            ("shared-org", "goods-shared-gcp", "gcp", 31),
+            (own["org_id"], own["deployment_id"], "aws", 1),
+        ]
+        return "OK", {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {
+                            "foxtrot_owner_id": owner,
+                            "deployment_id": dep,
+                            "deployment_environment_name": cloud,
+                        },
+                        "value": [0, world.clock.now().timestamp() - age],
+                    }
+                    for owner, dep, cloud, age in identities
+                ],
+            },
+        }
+
+    monkeypatch.setattr(metrics, "read_backend", backend)
+    async with await client_for(world) as client:
+        client._transport.app.state.deployment_service.store.environments = lambda: [own]
+        response = await client.get("/v1/applications/goods/system-metrics/deployments")
+        body = response.json()
+        assert body["state"] == "OK"
+        assert [(row["environmentId"], row["access"]) for row in body["environments"]] == [
+            ("shared:env-123456789abc", "shared"),
+            ("env-own-aws", "personal"),
+        ]
+        assert 'deployment_id="unregistered"' not in queries[0]
+        assert 'deployment_id="goods-shared-aws"' in queries[0]
+        client._transport.app.state.deployment_service = None
+        response = await client.get("/v1/applications/goods/system-metrics/deployments")
+        assert [row["access"] for row in response.json()["environments"]] == ["shared"]
+
+
+@pytest.mark.parametrize(
+    "change", ["duplicate-id", "duplicate-identity", "unknown-environment", "empty-owner"]
+)
+def test_shared_registry_rejects_ambiguous_or_unregistered_configuration(world, change):
+    from pydantic import ValidationError
+
+    from control_plane.seed import Seed
+
+    register_shared(world)
+    body = world.platform.context.seed.model_dump(by_alias=True)
+    first, second = body["systemDeployments"]
+    if change == "duplicate-id":
+        second["environmentId"] = first["environmentId"]
+    elif change == "duplicate-identity":
+        second.update({key: first[key] for key in ["ownerId", "deploymentId", "environment"]})
+    elif change == "unknown-environment":
+        second["environment"] = "unknown"
+    else:
+        first["ownerId"] = ""
+    with pytest.raises(ValidationError):
+        Seed.model_validate(body)

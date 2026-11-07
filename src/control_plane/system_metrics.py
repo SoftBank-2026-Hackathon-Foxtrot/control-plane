@@ -12,13 +12,37 @@ from fastapi import APIRouter, Query, Request
 from pydantic import BeforeValidator
 
 from control_plane.api.dependencies import Context, CurrentSession
-from control_plane.deployment.api import call, org_id, service
+from control_plane.deployment.api import call, org_id
 from control_plane.errors import ApiError
 from control_plane.telemetry_query import read_backend
 
 router = APIRouter(prefix="/v1/applications/{application_id}/system-metrics")
 Category = Literal["cpu", "memory", "disk", "network"]
 Window = Annotated[Literal[15, 60, 360], BeforeValidator(int)]
+
+
+def shared_records(context: Context) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "shared:" + row.environment_id,
+            "org_id": row.owner_id,
+            "cloud": row.environment,
+            "deployment_id": row.deployment_id,
+            "status": "REPORTING",
+            "access": "shared",
+        }
+        for row in context.seed.system_deployments
+    ]
+
+
+def labels_for(application: str, record: dict[str, Any]) -> str:
+    return (
+        f"application_id={json.dumps(application)},"
+        f"foxtrot_owner_id={json.dumps(record['org_id'])},"
+        f"deployment_id={json.dumps(record['deployment_id'])},"
+        f"deployment_environment_name={json.dumps(record['cloud'])},"
+        'service_name="foxtrot-app-runtime"'
+    )
 
 
 @router.get("/deployments")
@@ -28,26 +52,33 @@ async def live_deployments(
     if application_id != context.seed.application:
         raise ApiError(404, "NOT_FOUND", "unknown application")
     owner = org_id(str(session.user.id), application_id)
-    engine = service(request)
-    records = [
-        row
-        for row in await call(engine.store.environments)
-        if row["org_id"] == owner and row["status"] not in {"DESTROYING", "DESTROYED"}
-    ]
+    engine = getattr(request.app.state, "deployment_service", None)
+    records = shared_records(context)
+    if engine is not None:
+        records += [
+            {**row, "access": "personal"}
+            for row in await call(engine.store.environments)
+            if row["org_id"] == owner and row["status"] not in {"DESTROYING", "DESTROYED"}
+        ]
     if not records:
-        return {"state": "OK", "environments": []}
-    selector = (
-        f"foxtrot_runtime_collection{{application_id={json.dumps(application_id)},"
-        f'foxtrot_owner_id={json.dumps(owner)},service_name="foxtrot-app-runtime"}}'
-    )
+        return {"state": "OK" if engine is not None else "NOT_CONFIGURED", "environments": []}
+    # Every selector includes the full registered identity. Sharing one deployment
+    # does not grant access to other deployments under the same org or app name.
+    selectors = [
+        "(timestamp(foxtrot_runtime_collection{"
+        + labels_for(application_id, row)
+        + "}) > time() - 30)"
+        for row in records
+    ]
     async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
         state, payload = await read_backend(
             http,
             context.settings.prometheus_url,
             "/api/v1/query",
             {
-                "query": "max by (deployment_id, deployment_environment_name) "
-                f"(timestamp({selector}) > time() - 30)"
+                "query": "max by (foxtrot_owner_id, deployment_id, deployment_environment_name) ("
+                + " or ".join(selectors)
+                + ")"
             },
         )
     if state != "OK":
@@ -55,11 +86,23 @@ async def live_deployments(
     try:
         if payload["status"] != "success" or payload["data"]["resultType"] != "vector":
             raise ValueError("invalid backend result")
-        live = {
-            (row["metric"]["deployment_id"], row["metric"]["deployment_environment_name"])
-            for row in payload["data"]["result"]
-        }
-    except (KeyError, ValueError, TypeError):
+        live = set()
+        for row in payload["data"]["result"]:
+            observed = float(row["value"][1])
+            if (
+                not math.isfinite(observed)
+                or not 0 <= context.clock.now().timestamp() - observed < 30
+            ):
+                continue
+            metric = row["metric"]
+            live.add(
+                (
+                    metric["foxtrot_owner_id"],
+                    metric["deployment_id"],
+                    metric["deployment_environment_name"],
+                )
+            )
+    except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
         return {"state": "UNAVAILABLE", "environments": []}
     return {
         "state": "OK",
@@ -69,9 +112,10 @@ async def live_deployments(
                 "deploymentId": row["deployment_id"],
                 "cloud": row["cloud"],
                 "status": row["status"],
+                "access": row["access"],
             }
             for row in records
-            if (row["deployment_id"], row["cloud"]) in live
+            if (row["org_id"], row["deployment_id"], row["cloud"]) in live
         ],
     }
 
@@ -81,18 +125,16 @@ async def scope(
 ) -> str:
     if application_id != context.seed.application:
         raise ApiError(404, "NOT_FOUND", "unknown application")
-    owner = org_id(str(session.user.id), application_id)
-    engine = service(request)
-    selected = await call(engine.store.environment, deployment)
-    if selected is None or selected["org_id"] != owner:
-        raise ApiError(404, "NOT_FOUND", "deployment not found")
-    return (
-        f"application_id={json.dumps(application_id)},"
-        f"foxtrot_owner_id={json.dumps(owner)},"
-        f"deployment_id={json.dumps(selected['deployment_id'])},"
-        f"deployment_environment_name={json.dumps(selected['cloud'])},"
-        'service_name="foxtrot-app-runtime"'
-    )
+    selected = next((row for row in shared_records(context) if row["id"] == deployment), None)
+    if selected is None:
+        engine = getattr(request.app.state, "deployment_service", None)
+        if engine is None or deployment.startswith("shared:"):
+            raise ApiError(404, "NOT_FOUND", "deployment not found")
+        selected = await call(engine.store.environment, deployment)
+        owner = org_id(str(session.user.id), application_id)
+        if selected is None or selected["org_id"] != owner:
+            raise ApiError(404, "NOT_FOUND", "deployment not found")
+    return labels_for(application_id, selected)
 
 
 def queries(labels: str, instance: str, category: Category) -> dict[str, tuple[str, str]]:

@@ -2,6 +2,14 @@
 application: goods
 scope: scope:goods
 
+# Optional: authenticated readers of this seed app can view these exact deployments.
+# This grants metric reads only, never deployment operations. See docs/system-metrics.md.
+# systemDeployments:
+#   - environmentId: env-000000000001
+#     deploymentId: goods-aws-example
+#     ownerId: shared-demo
+#     environment: aws
+
 environments:
   aws:
     appUrl: http://10.10.0.10:8000
