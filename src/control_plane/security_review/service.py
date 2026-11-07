@@ -63,6 +63,7 @@ class ReviewService:
             {
                 "application": cfg.application,
                 "mode": cfg.mode,
+                "readOnly": cfg.read_only,
                 "source": {
                     "role": cfg.aws_role,
                     "policy": cfg.aws_policy,
@@ -73,7 +74,8 @@ class ReviewService:
                     "bucket": cfg.gcp_bucket,
                     "extraBucket": cfg.extra_bucket,
                 },
-                "uiCanContinue": state["phase"] == "verified"
+                "uiCanContinue": not cfg.read_only
+                and state["phase"] == "verified"
                 and bool(state.get("appReady"))
                 and bool(state.get("verifiedAt"))
                 and self.clock.now().isoformat() < state.get("validUntil", ""),
@@ -160,6 +162,8 @@ class ReviewService:
         return "gap" if any(c["status"] == "fail" for c in state["checks"]) else "matched"
 
     async def change(self, action: str, change: Change, actor: str) -> dict[str, Any]:
+        if self.config.read_only and action in {"plan", "apply"}:
+            raise ApiError(403, "SECURITY_READ_ONLY", "조회 전용으로 연결되어 있습니다.")
         state = await self.load()
         now = self.clock.now()
         if change.revision != state["revision"]:

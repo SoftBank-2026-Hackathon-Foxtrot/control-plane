@@ -29,6 +29,14 @@ DynamoDB CAS로 중복 요청을 막고, 최대 50개 이벤트에 서버 시각
 
 `uiCanContinue`는 재확인 후 10분 동안만 유효하다. **기존 workflow/engine/approval/gate/cutover에는 연결하지 않는다.** 프런트 `/security`의 계속 버튼만 제어한다. 이 상태를 실제 트래픽 전환 승인으로 사용하면 안 된다.
 
+## 조회 전용 연결
+
+`readOnly`는 기본값이 `true`다. 조회와 재검사는 가능하고, 변경안 생성과 적용은 서버에서 403으로 거부한다. CloudProvider도 별도로 쓰기를 거부한다. 응답의 `readOnly`를 받아 프런트는 조회 전용 표시를 하고 변경안·적용·진행 버튼을 숨긴다. 기존 workflow와 마이그레이션 승인은 수정하지 않는다.
+
+실제 연결에는 별도 GCP 조회 계정을 사용한다. 앱 서비스 계정의 권한을 변경하지 않고, 지정한 두 버킷에만 조회 계정의 읽기 권한을 추가한다. AWS Task Role에는 지정한 앱 역할의 `iam:GetRolePolicy`만 추가한다. 조회 계정에는 `storage.buckets.setIamPolicy`와 객체 읽기·쓰기·삭제 권한을 부여하지 않는다.
+
+쓰기 시연을 다시 사용할 때만 별도 설정으로 `readOnly: false`와 적용 권한을 준비한다. 로컬 fixture 예시는 이 모드를 명시한다.
+
 ## ECS 연결
 
 현재 런타임 조사(2026-11-08): `foxtrot-platform`의 control-plane·console·adapter는 ECS다. seed의 `chiikawa` 앱은 AWS EC2 `chiikawa-aws-3e3d`와 GCP Compute Engine `chiikawa-gcp-1975`를 가리킨다. 별도의 앱 ECS task는 없었다.
