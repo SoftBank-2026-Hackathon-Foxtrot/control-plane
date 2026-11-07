@@ -26,6 +26,7 @@ class ReviewConfig(Model):
     )
     gcp_credentials_ref: str | None = None
     mode: Literal["cloud", "fixture"] = "cloud"
+    read_only: bool = True
 
     @model_validator(mode="after")
     def separate_buckets(self) -> Self:

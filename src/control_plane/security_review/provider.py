@@ -84,6 +84,8 @@ class CloudProvider:
         }
 
     def apply(self, policy: dict[str, Any]) -> None:
+        if self.config.read_only:
+            raise ValueError("security review is read-only")
         # Bucket and principal never come from the POST body. etag prevents lost updates.
         response = httpx.put(
             "https://storage.googleapis.com/storage/v1/b/"

@@ -1,6 +1,13 @@
 {
-  "application": "goods", "allowedUserIds": ["local:developer"],
-  "awsRole": "goods-app", "awsBucket": "goods-aws", "gcpBucket": "goods-gcp",
-  "extraBucket": "goods-security-demo", "mode": "fixture",
-  "gcpPrincipal": "serviceAccount:goods@app-project.iam.gserviceaccount.com"
+  "application": "goods",
+  "allowedUserIds": [
+    "local:developer"
+  ],
+  "awsRole": "goods-app",
+  "awsBucket": "goods-aws",
+  "gcpBucket": "goods-gcp",
+  "extraBucket": "goods-security-demo",
+  "mode": "fixture",
+  "gcpPrincipal": "serviceAccount:goods@app-project.iam.gserviceaccount.com",
+  "readOnly": false
 }
