@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from control_plane.deployment.provisioner.__main__ import build
 from control_plane.deployment.provisioner.inventory import Inventory
 from control_plane.deployment.provisioner.node_bundle import install
 from control_plane.deployment.tools import setup_onprem
@@ -100,6 +101,20 @@ def test_setup_bundle_round_trip_with_existing_cloud_configuration(tmp_path, mon
     assert len(material) == 13
     node = merged["clouds"]["onprem"]["nodes"]["home-pc"]
     assert Path(node["secretFiles"]["WORKLOAD_TOKEN"]).read_text() == "test-workload-token"
+    registration = Path(merged["workRoot"]) / "onprem-registration" / "bundle.json"
+    registration.write_text(raw)
+    registration.chmod(0o600)
+    engine = build(json.loads(config.read_text()), {})
+    try:
+        assert engine.onprem_error is None
+        assert engine.onprem is not None
+        assert engine.config["clouds"]["aws"] == {"accounts": ["existing"]}
+        assert engine.tf.nodes["home-pc"]["orgs"] == ["app-1234567890"]
+        assert engine.onprem.catalog.resolve(json.loads((output / "request.json").read_text()))
+    finally:
+        engine.store.db.close()
+        if engine.onprem:
+            engine.onprem.store.db.close()
 
 
 @pytest.mark.parametrize("image", [None, "ghcr.io/other/app:v1", "ghcr.io/foxtrot-evil/app:v1"])

@@ -16,6 +16,15 @@ from .api import call, fixed_application, org_id, service
 router = APIRouter()
 
 
+def onprem_service(request: Request) -> Any:
+    engine = service(request)
+    if getattr(engine, "onprem_error", None):
+        raise ApiError(
+            503, "ONPREM_CONFIGURATION_UNAVAILABLE", "operator must repair the on-prem registration"
+        )
+    return engine
+
+
 def idempotency(request: Request, user: str, application: str) -> str:
     key = request.headers.get("Idempotency-Key")
     if not key or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", key):
@@ -29,7 +38,7 @@ async def deployment_targets(
 ) -> dict[str, Any]:
     fixed_application(context, application_id)
     owner = org_id(str(session.user.id), application_id)
-    nodes = service(request).config.get("clouds", {}).get("onprem", {}).get("nodes", {})
+    nodes = onprem_service(request).config.get("clouds", {}).get("onprem", {}).get("nodes", {})
     return {
         "onprem": [
             {
@@ -54,7 +63,7 @@ async def prepare_onprem(
     session: CheckedSession,
 ) -> dict[str, Any]:
     fixed_application(context, application_id)
-    engine = service(request)
+    engine = onprem_service(request)
     if engine.onprem is None:
         raise ApiError(503, "ONPREM_NOT_CONFIGURED", "on-prem preparation is not configured")
     owner = org_id(str(session.user.id), application_id)
@@ -95,7 +104,7 @@ async def preparation_jobs(
         path,
         request,
         response,
-        service(request),
+        onprem_service(request),
         org_id(str(session.user.id), context.seed.application),
     )
 
@@ -109,7 +118,7 @@ async def application_recovery(
     context: Context,
     session: CheckedSession,
 ) -> dict[str, Any]:
-    engine = service(request)
+    engine = onprem_service(request)
     env = await call(engine.store.environment, environment_id)
     owner = org_id(str(session.user.id), context.seed.application)
     if env is None or env["org_id"] != owner:

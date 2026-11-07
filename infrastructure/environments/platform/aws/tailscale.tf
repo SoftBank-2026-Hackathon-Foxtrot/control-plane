@@ -16,24 +16,14 @@ resource "tailscale_acl" "this" {
   overwrite_existing_content = true
   acl = jsonencode({
     tagOwners = { for t in values(local.ts_tags) : t => ["autogroup:admin"] }
-    acls = concat([
+    acls = [
       # Platform and app environments reach each other and the VPC ranges they advertise.
       # Sources include the advertised ranges: a platform task (10.30.x) keeps its own address
       # through the gateway, and the receiving router checks that address against this rule.
       { action = "accept", src = concat(values(local.ts_tags), keys(local.ts_routes)),
       dst = concat([for t in values(local.ts_tags) : "${t}:*"], [for r in keys(local.ts_routes) : "${r}:*"]) },
       { action = "accept", src = ["autogroup:admin"], dst = ["*:*"] },
-      ], flatten([for node in values(var.onprem_nodes) : [
-        {
-          action = "accept", src = ["tag:mgmt", var.vpc_cidr],
-          dst    = [for port in distinct([22, node.app_port, 5432, 6379, 8333, 18888]) : "${node.tailscale_ip}:${port}"]
-        },
-        {
-          action = "accept", src = [node.tailscale_ip],
-          dst = concat([for port in [6379, 6432, 8000, 8080] : "${var.vpc_cidr}:${port}"],
-          ["${cidrhost(var.vpc_cidr, 2)}:53", "${local.provisioner_baseline.aws.baseline.network.vpc_cidr}:5432"])
-        }
-    ]]))
+    ]
     autoApprovers = { routes = local.ts_routes }
   })
 }

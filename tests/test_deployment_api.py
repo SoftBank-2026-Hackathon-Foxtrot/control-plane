@@ -91,6 +91,28 @@ async def test_onprem_recovery_does_not_mutate_cloud_deployments(deployment_cons
     assert engine.store.environment(env_id) == before
 
 
+async def test_failed_onprem_registration_leaves_cloud_api_available(deployment_console):
+    console = deployment_console
+    engine = console.app.state.deployment_service
+    engine.onprem_error = "ONPREM_CONFIGURATION_UNAVAILABLE"
+    engine.config["clouds"].pop("onprem")
+    response = await console.http.get("/v1/applications/goods/deployment-targets")
+    assert response.status_code == 503
+    assert response.json()["code"] == "ONPREM_CONFIGURATION_UNAVAILABLE"
+    response = await console.http.post(
+        DEPLOY, json={"cloud": "onprem"}, headers=console.change_headers()
+    )
+    assert response.status_code == 503
+    for cloud in ("aws", "gcp"):
+        response = await console.http.post(
+            DEPLOY, json={"cloud": cloud}, headers=console.change_headers()
+        )
+        assert response.status_code == 202, response.text
+        drain(engine)
+        result = await console.http.get(response.headers["Location"])
+        assert result.status_code == 200 and result.json()["status"] == "SUCCEEDED"
+
+
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "onprem"])
 async def test_api_deploys_fixed_image_without_registration(
     deployment_console: Console, cloud: str

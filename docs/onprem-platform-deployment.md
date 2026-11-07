@@ -6,6 +6,10 @@
 실행하지 않는다. 이 문서의 명령은 운영자가 나중에 실행하는 절차이며, 구현 검증에서는
 AWS apply, 원격 SSH, 컨테이너 기동을 실행하지 않았다.
 
+기존 AWS ECS task definition·Secrets Manager 주입·IAM·공용 Tailscale ACL·보안 그룹·DNS는
+이 변경에서 수정하지 않는다. 온프렘 등록은 기존 workRoot의 별도 파일로 전달한다.
+등록 오류는 온프렘 기능만 비활성화하며 AWS/GCP의 설정과 기동 경로는 유지한다.
+
 ## 실행 구조와 지원 범위
 
 - 플랫폼: AWS의 기존 control-plane, DB/Redis 프록시, 마이그레이션 어댑터를 사용한다.
@@ -42,18 +46,11 @@ Linux에서는 기존 로그인 상태에서 `sudo tailscale set --accept-routes
 | PC/앱 컨테이너 → DNS 서버:53 TCP/UDP | 내부 서비스 이름 조회 |
 | PC → 이미지 레지스트리:443 | 앱과 데이터 서비스 이미지 다운로드 |
 
-`infrastructure/environments/platform/aws`에는 다음 선택 설정을 추가했다.
-값이 없으면 기존 클라우드 설정을 유지한다.
-
-```hcl
-onprem_nodes = {
-  home-pc = { tailscale_ip = "100.64.1.2", app_port = 80 }
-}
-onprem_bundle_secret_arn = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:foxtrot/onprem/REPLACE"
-```
-
-이 설정은 PC의 Tailnet IP에 필요한 ACL과 등록 bundle 전달을 추가한다.
-관리 게이트웨이의 기존 SNAT 경로와 VPC 허용 보안 그룹을 사용하므로 PC별 SG 규칙을 추가하지 않는다.
+현재 Tailnet ACL이 위 경로를 허용하는지 먼저 확인한다. 같은 Tailnet에 가입했다는
+이유만으로 접근이 허용됐다고 가정하지 않는다. 코드와 설정 생성기는 ACL을 수정하지 않는다.
+차단된 경로가 있으면 출발지·목적지·포트를 보고하고 기존 정책 관리자에게 필요한 규칙만
+요청한다. 공용 ACL을 교체하거나 권한을 넓힌 장치 태그로 우회하지 않는다.
+관리 게이트웨이의 기존 SNAT 경로와 VPC 허용 보안 그룹을 사용하며 PC별 SG 규칙을 추가하지 않는다.
 플랫폼 private route table의 `100.64.0.0/10 → gateway` 경로는 기존 코드를 사용한다.
 PC의 로컬 방화벽에서도 VPN을 통한 해당 포트 접근을 허용해야 한다.
 AWS 앱 데이터로 직접 접속하는 경로가 별도로 필요한 프로파일은 AWS 앱 subnet route,
@@ -63,8 +60,8 @@ AWS 앱 데이터로 직접 접속하는 경로가 별도로 필요한 프로파
 `10.30.0.2`이며, VPC CIDR을 바꿨다면 해당 VPC의 +2 주소를 사용한다. 관리 게이트웨이의
 기본 SNAT 경로에서 이 resolver에 접근한다. 별도 DNS 서버를 만들 필요는 없다.
 앱 설정의 `dnsServers`에도 이 주소를 넣어 컨테이너에서 내부 이름을 확인한다.
-플랫폼 ACL은 PC의 DNS 53 접근과 AWS 앱 VPC의 DB 5432 접근을 추가한다. AWS 원본 DB의
-보안 그룹과 라우팅 허용도 별도로 확인해야 한다.
+PC의 DNS 53 접근과 AWS 원본 DB의 5432 접근은 기존 ACL·보안 그룹·라우팅에서
+별도로 확인해야 한다. 연결 검사가 실패해도 생성기가 플랫폼 네트워크를 변경하지 않는다.
 [Tailscale AWS DNS 안내](https://tailscale.com/docs/reference/reference-architectures/aws)를 참고한다.
 
 원본 PC의 host key는 PC에서 `/etc/ssh/ssh_host_ed25519_key.pub`를 직접 확인한다.
@@ -148,19 +145,36 @@ profile, `config.json`, `platform-bundle.json`을 생성한다. 기존 경로는
 이미지를 포함하므로 플랫폼에서 별도로 수동 편집할 필요가 없다. 이미지가 없거나
 허용된 레지스트리 밖이면 키·파일을 생성하기 전에 거절한다.
 앱 포트는 서버 catalog의 기본값 80이다. 이미지·포트·템플릿·healthPath를 배포 요청에서
-변경할 수 없다. 운영자가 catalog를 바꾸면 `onprem_nodes.app_port`도 맞춰야 한다.
+변경할 수 없다. 운영자가 catalog를 바꾸면 VM 포트 사용 여부와 기존 접근 정책도 확인한다.
 생성한 `secrets/ssh_key.pub`만 PC의 해당 SSH 사용자 `authorized_keys`에 추가한다.
 기존 키는 유지하고 권한은 `.ssh=700`, `authorized_keys=600`으로 설정한다.
 
 ## 3. 플랫폼에 등록
 
-AWS에서는 `platform-bundle.json` 내용을 Secrets Manager 비밀 값으로 보관하고 그 ARN만
-`onprem_bundle_secret_arn`에 지정한다. bundle은 64 KiB 이하의 비공개 JSON이다.
-Terraform state/tfvars에 bundle 원문이나 개인키를 넣지 않는다.
+플랫폼의 **기존 workRoot** 아래 `onprem-registration/bundle.json`으로 생성한
+`platform-bundle.json`을 전달한다. 현재 AWS 구성은 이미 EFS를
+`/var/lib/foxtrot-provisioner`에 마운트하므로 최종 경로는 다음과 같다.
 
-control-plane ECS task가 `PROVISIONER_ONPREM_BUNDLE`로 읽고 EFS workRoot에 0600 파일로
-풀어 쓴다. 기존 AWS/GCP 설정을 보존하면서 온프렘 노드·서버 이미지·inventory를 추가한다.
-Secret 갱신 후에는 ECS task 재기동이 필요하다. 현재 bundle 하나는 PC 한 대 등록용이다.
+```text
+/var/lib/foxtrot-provisioner/onprem-registration/bundle.json
+```
+
+운영자가 이미 사용할 수 있는 비공개 파일 전달 경로를 사용한다. 디렉터리는 0700,
+파일은 0600, 소유자는 플랫폼 프로세스 사용자여야 한다. bundle은 64 KiB 이하이며
+symlink는 허용하지 않는다. 임시 파일로 완전히 전달한 뒤 이름을 바꿔 교체한다.
+기존 전달 경로가 없다면 등록 전달이 미완료임을 보고한다. 이를 위해 ECS Exec·IAM·
+task definition·Secrets Manager 설정을 자동으로 추가하지 않는다.
+
+플랫폼은 시작할 때 이 선택 파일을 읽고 온프렘 전용 디렉터리에 자격 증명을 보관한다.
+기존 AWS/GCP 설정을 보존하면서 온프렘 노드·서버 이미지·inventory를 추가한다.
+파일이 없으면 기존 설정으로 시작한다. 파일 권한·JSON·catalog·드라이버 초기화에
+문제가 있으면 온프렘만 비활성화하고 비밀값 없는 경고를 남긴다. 온프렘 전용 API는
+`503 ONPREM_CONFIGURATION_UNAVAILABLE`를 반환하며 기존 클라우드 API는 계속 제공한다.
+파일 수정 후 반영에는 플랫폼 재시작이 필요하다. 자동 재시작이나 운영 환경 변경은 하지 않는다.
+현재 bundle 하나는 PC 한 대 등록용이며 원문이나 개인키를 Git·tfvars에 넣지 않는다.
+
+코드 push만으로 실행 중인 플랫폼에 API가 추가되지는 않는다. 이 브랜치의 플랫폼 이미지는
+기존 릴리스 절차에서 배포하고 등록 파일도 그 절차에 맞춰 반영한다.
 
 별도 로컬 controller를 쓰는 경우에는 생성 시 `--platform-config`로 기존 설정을
 합치고 생성된 `config.json`을 `PROVISIONER_CONFIG`로 지정한다.
