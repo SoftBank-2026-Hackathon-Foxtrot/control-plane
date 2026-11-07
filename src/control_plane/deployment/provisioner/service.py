@@ -136,7 +136,8 @@ class Service:
     @admission
     def apply(self, env_id: str) -> tuple[int, dict]:
         env = self._get(env_id)
-        if env["status"] != "PLANNED":
+        retry = env["cloud"] == "onprem" and env["status"] == "RETRYABLE"
+        if env["status"] != "PLANNED" and not retry:
             raise Conflict(
                 "INVALID_STATE", f"only a PLANNED environment can be applied (now {env['status']})"
             )
@@ -144,7 +145,7 @@ class Service:
         self.store.update_environment(env_id, now(), status="APPLYING")
         return 202, {
             "environmentId": env_id,
-            "jobId": self._enqueue(env_id, "APPLY"),
+            "jobId": self._enqueue(env_id, "RETRY_APPLY" if retry else "APPLY"),
             "status": "APPLYING",
         }
 
@@ -417,12 +418,26 @@ class Service:
                     plan=plan,
                     status="PLANNED" if job["kind"] == "PLAN" else "APPLYING",
                 )
-            if job["kind"] in ("APPLY", "PLAN_APPLY", "RECONCILE"):
-                handoff = (
-                    self.tf.reconcile(env_id, cloud, env["tfvars"])
-                    if job["kind"] == "RECONCILE"
-                    else self.tf.apply(env_id, cloud, "reviewed.tfplan")
-                )
+            if job["kind"] in ("APPLY", "PLAN_APPLY", "RETRY_APPLY", "RECONCILE"):
+                if job["kind"] == "RECONCILE":
+                    handoff = self.tf.reconcile(env_id, cloud, env["tfvars"])
+                    if handoff and handoff.get("retryOwnedEmpty"):
+                        self.store.update_environment(
+                            env_id,
+                            now(),
+                            status="RETRYABLE",
+                            handoff=None,
+                            error=None,
+                            readiness=None,
+                        )
+                        self.store.update_job(job["id"], status="SUCCEEDED", finished_at=now())
+                        return
+                elif job["kind"] == "RETRY_APPLY":
+                    handoff = self.tf.apply(
+                        env_id, cloud, "reviewed.tfplan", retry_owned_empty=True
+                    )
+                else:
+                    handoff = self.tf.apply(env_id, cloud, "reviewed.tfplan")
                 if job["kind"] == "RECONCILE" and handoff is None:
                     self.store.update_environment(
                         env_id, now(), status="DESTROYED", handoff=None, error=None, readiness=None
@@ -445,7 +460,7 @@ class Service:
                         "application": {"status": "PENDING", "observedAt": None},
                     },
                 )
-            if job["kind"] in ("APPLY", "PLAN_APPLY", "RECONCILE", "CHECK_APP"):
+            if job["kind"] in ("APPLY", "PLAN_APPLY", "RETRY_APPLY", "RECONCILE", "CHECK_APP"):
                 # A separate job keeps apply evidence if this process stops while probing.
                 if job["kind"] != "CHECK_APP":
                     self._enqueue(env_id, "CHECK_APP")
@@ -485,10 +500,14 @@ class Service:
                 self.store.update_environment(
                     env_id, now(), status="DESTROYED", handoff=None, error=None, readiness=None
                 )
-        except (TerraformError, OSError, ValueError) as exc:
+        except (TerraformError, OSError, ValueError, Conflict, NotFound) as exc:
             from .node import NodeEffectUnconfirmed
 
-            if isinstance(exc, NodeEffectUnconfirmed):
+            if isinstance(exc, (Conflict, NotFound)) and cloud != "onprem":
+                raise
+            if isinstance(exc, NodeEffectUnconfirmed) or (
+                isinstance(exc, (Conflict, NotFound)) and job["kind"] != "CHECK_APP"
+            ):
                 self.store.update_job(
                     job["id"], status="NEEDS_RECONCILIATION", error=str(exc), finished_at=now()
                 )

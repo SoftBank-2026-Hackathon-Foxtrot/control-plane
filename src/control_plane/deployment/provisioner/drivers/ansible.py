@@ -242,7 +242,10 @@ class AnsibleDriver:
                     ],
                 }
 
+            port_in_use = False
+
             def event_handler(event):
+                nonlocal port_in_use
                 data = event.get("event_data", {})
                 host_id = data.get("host")
                 if host_id in inventory_hosts:
@@ -251,6 +254,17 @@ class AnsibleDriver:
                             {"phase": phase, "hostId": host_id, "observedAt": stamp()}
                         )
                     msg = data.get("res", {}).get("msg")
+                    if (
+                        phase == "preflight"
+                        and data.get("task") == "Check that new service ports are free"
+                    ):
+                        results = data.get("res", {}).get("results", [])
+                        if msg == "FOXTROT_SERVICE_PORT_IN_USE" or any(
+                            isinstance(item, dict)
+                            and item.get("msg") == "FOXTROT_SERVICE_PORT_IN_USE"
+                            for item in results
+                        ):
+                            port_in_use = True
                     if (
                         event.get("event") == "runner_on_ok"
                         and data.get("task") == "Publish preparation evidence"
@@ -282,6 +296,10 @@ class AnsibleDriver:
                 quiet=True,
             )
             if result.rc != 0 or result.status != "successful":
+                if port_in_use:
+                    raise DriverError(
+                        "SERVICE_PORT_IN_USE", "registered service port is already occupied"
+                    )
                 raise DriverError(
                     "ANSIBLE_" + phase.upper() + "_FAILED",
                     "Ansible stage did not finish",

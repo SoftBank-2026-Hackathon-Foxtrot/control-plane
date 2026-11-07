@@ -296,7 +296,7 @@ class DeploymentExecutor:
             },
         }
 
-    def apply(self, env_id, cloud, plan):
+    def apply(self, env_id, cloud, plan, *, retry_owned_empty=False):
         if cloud != "onprem":
             return self.terraform.apply(env_id, cloud, plan)
         saved = json.loads((self.terraform.work_root / env_id / plan).read_text())
@@ -304,7 +304,11 @@ class DeploymentExecutor:
         if saved["nodeDigest"] != node_config.fingerprint(node):
             raise TerraformError("Registered node changed after planning; create a fresh plan")
         action = "destroy" if saved["destroy"] else "apply"
-        self.remote(node, self.payload(env_id, spec, node, action))
+        payload = self.payload(env_id, spec, node, action)
+        if retry_owned_empty:
+            require(action == "apply", "only an application apply can be retried")
+            payload["retryOwnedEmpty"] = True
+        self.remote(node, payload)
         return None if saved["destroy"] else self.handoff(env_id, spec, node)
 
     def reconcile(self, env_id, cloud, spec):
@@ -313,6 +317,13 @@ class DeploymentExecutor:
         result = self.remote(node, self.payload(env_id, spec, node, "inspect"))
         if result.get("released"):
             return None
+        directory = self.terraform.work_root / env_id
+        if (
+            result.get("ownedEmpty")
+            and (directory / "reviewed.tfplan").is_file()
+            and not (directory / "destroy.tfplan").exists()
+        ):
+            return {"retryOwnedEmpty": True}
         return self.handoff(env_id, spec, node)
 
     def check(self, handoff):

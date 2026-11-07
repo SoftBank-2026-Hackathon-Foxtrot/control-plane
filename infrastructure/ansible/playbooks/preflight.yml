@@ -43,6 +43,7 @@
         port: '{{ item }}'
         state: stopped
         timeout: 1
+        msg: FOXTROT_SERVICE_PORT_IN_USE
       loop: '{{ foxtrot_ports }}'
       when: not (reservation.stdout | from_json).claimed
       check_mode: false

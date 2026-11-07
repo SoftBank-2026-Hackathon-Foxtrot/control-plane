@@ -44,6 +44,32 @@ def service(request: Request) -> Any:
     return value
 
 
+def onprem_actor_counts(engine: Any, context: Any, payload: dict[str, Any]) -> None:
+    node_id = payload.get("target", {}).get("nodeId")
+    nodes = engine.config["clouds"]["onprem"].get("nodes", {})
+    node = nodes.get(node_id) if isinstance(node_id, str) else None
+    if not node or payload["org"]["id"] not in node.get("orgs", []):
+        raise ApiError(404, "NOT_FOUND", "deployment target not found")
+    target = context.seed.environments.get("onprem")
+    actors = target.actors if target else {}
+    api = node.get("apiEnvironment", {}).get("WORKLOAD_ACTOR")
+    worker = node.get("workerEnvironment", {}).get("WORKLOAD_ACTOR")
+    if not api or not worker or api == worker or api not in actors or worker not in actors:
+        raise ApiError(
+            422,
+            "ONPREM_ACTORS_REQUIRED",
+            "register distinct API and worker actors in the on-prem environment",
+        )
+    for field, actor in (("apiWorkers", api), ("workerCount", worker)):
+        count = actors[actor]
+        if not 1 <= count <= 8 or payload["app"].setdefault(field, count) != count:
+            raise ApiError(
+                422,
+                "ONPREM_ACTOR_COUNT_MISMATCH",
+                f"{field} must match {actor} in the on-prem seed",
+            )
+
+
 async def call(function: Any, *args: Any) -> Any:
     from .provisioner.service import Conflict, NotFound
     from .provisioner.spec import RequestError
@@ -99,6 +125,8 @@ async def deploy(
                 503, "DEPLOYMENT_NOT_CONFIGURED", "no on-prem application image configured"
             )
         payload["app"]["image"] = image
+        if workflow_id is not None:
+            onprem_actor_counts(engine, context, payload)
     key = request.headers.get("Idempotency-Key")
     if not key or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", key):
         raise ApiError(

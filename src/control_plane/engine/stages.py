@@ -20,6 +20,7 @@ from control_plane.engine.evidence import WorkloadNotHeld, business_probes
 from control_plane.engine.traffic_observation import set_traffic
 from control_plane.engine.transition import held_command, hold_workload, release_workload
 from control_plane.probes import p95
+from control_plane.seed import OnpremTargetUnconfirmed
 from control_plane.traffic import TrafficError
 
 
@@ -68,6 +69,10 @@ class Prepare:
         self.runner = runner
 
     async def advance(self, ctx: StageContext) -> Outcome:
+        if "onprem" in (ctx.workflow.source_env, ctx.workflow.target_env):
+            problem = await self._onprem_targets(ctx)
+            if problem is not None:
+                return problem
         for env in (ctx.source_env, ctx.target_env):
             if not await ctx.services.prober.is_ready(env.app_url):
                 if ctx.elapsed("apps_ready") > ctx.seed.timings.command_timeout:
@@ -94,6 +99,57 @@ class Prepare:
             if not isinstance(prepared, Passed):
                 return prepared
         return Passed()
+
+    @staticmethod
+    async def _onprem_targets(ctx: StageContext) -> Stop | None:
+        # Check the whole request before *any* adapter receives PREPARE or a binding.
+        original = ctx.stage.data.get("onpremResourceRefs")
+        refs: dict[str, list[str]] = {}
+        for kind in ctx.seed.managed:
+            state = await ctx.resource(kind)
+            explicit = kind.value in ctx.stage.data.get("explicitEndpointKinds", [])
+            if state.plan or explicit:
+                if not (state.plan and explicit):
+                    return Stop(
+                        "ONPREM_TARGET_UNCONFIRMED",
+                        "the saved endpoint pair was not confirmed for this workflow",
+                        resource=kind,
+                    )
+                continue  # BindingService already validated the explicitly supplied pair.
+            if kind in (
+                ResourceKind.DATABASE,
+                ResourceKind.REDIS,
+            ) and await ctx.services.repo.application_binding(ctx.workflow.application, kind):
+                return Stop(
+                    "ONPREM_TARGET_UNCONFIRMED",
+                    "provide explicit endpoints for the registered proxy binding",
+                    resource=kind,
+                )
+            if original is None and (
+                state.migration_id or state.binding_ref or ctx.stage.data.get("catalog_published")
+            ):
+                return Stop(
+                    "ONPREM_TARGET_UNCONFIRMED",
+                    "verify the existing adapter targets before resuming this older request",
+                    resource=kind,
+                )
+            try:
+                seed = ctx.seed.resource_seed(
+                    kind, ctx.workflow.source_env, ctx.workflow.target_env
+                )
+            except OnpremTargetUnconfirmed as error:
+                return Stop("ONPREM_TARGET_UNCONFIRMED", str(error), resource=kind)
+            assert seed.source_ref and seed.target_ref
+            refs[kind.value] = [seed.source_ref, seed.target_ref]
+        if original is None:
+            ctx.stage.data["onpremResourceRefs"] = refs
+            await ctx.services.repo.save_stage(ctx.workflow.id, ctx.stage)
+        elif original != refs:
+            return Stop(
+                "ONPREM_TARGET_UNCONFIRMED",
+                "the registered refs changed after this workflow started",
+            )
+        return None
 
     async def _register(self, ctx: StageContext, kind: ResourceKind) -> Outcome:
         if kind is not ResourceKind.DATABASE:
@@ -168,8 +224,12 @@ class Prepare:
         if resource.migration_id:
             return Passed()
         profile = PROFILES[kind]
-        seed = ctx.seed.resource_seed(kind, ctx.workflow.source_env, ctx.workflow.target_env)
-        body = resource.plan or profile.plan_body(ctx.workflow, seed, resource, ctx.seed.scope)
+        body = resource.plan or profile.plan_body(
+            ctx.workflow,
+            ctx.seed.resource_seed(kind, ctx.workflow.source_env, ctx.workflow.target_env),
+            resource,
+            ctx.seed.scope,
+        )
         try:
             view = await ctx.client(kind).create_migration(f"{ctx.workflow.id}:{kind.value}", body)
         except AdapterError as error:
