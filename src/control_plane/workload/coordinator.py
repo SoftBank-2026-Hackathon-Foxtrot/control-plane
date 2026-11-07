@@ -38,6 +38,7 @@ class ActorStatus:
     observed_at: datetime | None
     reported: int
     expected: int
+    active_web_sockets: int | None = None
 
     def satisfied(self, state: ActorState) -> bool:
         return self.state == state.value and self.reported >= self.expected
@@ -59,6 +60,7 @@ class WorkloadCoordinator:
         generation: int,
         state: ActorState,
         in_flight: int,
+        active_web_sockets: int | None = None,
         redis_route: RedisRoute | None = None,
         redis_route_generation: int = 0,
         stale_connections: int = 0,
@@ -71,6 +73,7 @@ class WorkloadCoordinator:
                 generation=generation,
                 state=state,
                 in_flight=in_flight,
+                active_web_sockets=active_web_sockets,
                 observed_at=self.clock.now(),
                 redis_route=redis_route,
                 redis_route_generation=redis_route_generation,
@@ -241,6 +244,12 @@ class WorkloadCoordinator:
                     observed_at=min((ack.observed_at for ack in mine), default=None),
                     reported=len(mine),
                     expected=expected,
+                    active_web_sockets=(
+                        sum(ack.active_web_sockets or 0 for ack in mine)
+                        if len(mine) >= expected
+                        and all(ack.active_web_sockets is not None for ack in mine)
+                        else None
+                    ),
                 )
             )
         return statuses

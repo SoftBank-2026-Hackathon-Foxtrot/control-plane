@@ -141,6 +141,7 @@ class CommandRecord(Model):
     send_attempts: int = 0
     operation_id: str | None = None
     operation_status: str | None = None
+    observation: dict[str, Any] = Field(default_factory=dict)
     error: dict[str, Any] | None = None
     retry_epoch: int = 0
     tries: int = 1
@@ -170,6 +171,11 @@ class TrafficRecord(Model):
     applied: dict[str, float] | None = None
     effective_percent: dict[str, float] | None = None
     verified: bool = False
+    config_verified: bool = False
+    adapter_operation_id: str | None = None
+    operation_status: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
     at: datetime
 
 
@@ -210,6 +216,7 @@ class ActorState(StrEnum):
 
 
 class ActorAck(Model):
+    active_web_sockets: int | None = None
     scope: str
     actor_id: str
     instance_id: str

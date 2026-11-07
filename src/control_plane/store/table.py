@@ -38,13 +38,28 @@ class Page:
 class Table(Protocol):
     async def get(self, pk: str, sk: str) -> Item | None: ...
 
-    async def put(self, pk: str, sk: str, body: str, *, expected_version: int | None) -> int:
+    async def put(
+        self,
+        pk: str,
+        sk: str,
+        body: str,
+        *,
+        expected_version: int | None,
+        expires_at: int | None = None,
+    ) -> int:
         """Writes and returns the new version. `expected_version=0` means it must not exist;
         `None` overwrites whatever is there."""
         ...
 
     async def query(
-        self, pk: str, prefix: str = "", *, after: str | None = None, limit: int | None = None
+        self,
+        pk: str,
+        prefix: str = "",
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ) -> Page: ...
 
     async def delete(self, pk: str, sk: str) -> None: ...
@@ -59,7 +74,15 @@ class MemoryTable:
         with self._lock:
             return self._items.get((pk, sk))
 
-    async def put(self, pk: str, sk: str, body: str, *, expected_version: int | None) -> int:
+    async def put(
+        self,
+        pk: str,
+        sk: str,
+        body: str,
+        *,
+        expected_version: int | None,
+        expires_at: int | None = None,
+    ) -> int:
         with self._lock:
             current = self._items.get((pk, sk))
             stored = current.version if current else 0
@@ -70,13 +93,24 @@ class MemoryTable:
             return version
 
     async def query(
-        self, pk: str, prefix: str = "", *, after: str | None = None, limit: int | None = None
+        self,
+        pk: str,
+        prefix: str = "",
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ) -> Page:
         with self._lock:
             matching = sorted(
                 (item for (p, s), item in self._items.items() if p == pk and s.startswith(prefix)),
                 key=lambda item: item.sk,
             )
+        if start is not None:
+            matching = [item for item in matching if item.sk >= start]
+        if end is not None:
+            matching = [item for item in matching if item.sk <= end]
         if after is not None:
             matching = [item for item in matching if item.sk > after]
         if limit is not None and len(matching) > limit:
@@ -133,15 +167,31 @@ class DynamoTable:
         raw = response.get("Item")
         return self._item(raw) if raw else None
 
-    async def put(self, pk: str, sk: str, body: str, *, expected_version: int | None) -> int:
+    async def put(
+        self,
+        pk: str,
+        sk: str,
+        body: str,
+        *,
+        expected_version: int | None,
+        expires_at: int | None = None,
+    ) -> int:
         if expected_version is None:
             # Overwrites must still move the version forward: readers compare on it.
             response = await asyncio.to_thread(
                 self.client.update_item,
                 TableName=self.name,
                 Key=self._key(pk, sk),
-                UpdateExpression="SET body = :body ADD version :one",
-                ExpressionAttributeValues={":body": {"S": body}, ":one": {"N": "1"}},
+                UpdateExpression=(
+                    "SET body = :body"
+                    + (", expiresAt = :ttl" if expires_at is not None else "")
+                    + " ADD version :one"
+                ),
+                ExpressionAttributeValues={
+                    ":body": {"S": body},
+                    ":one": {"N": "1"},
+                    **({":ttl": {"N": str(expires_at)}} if expires_at is not None else {}),
+                },
                 ReturnValues="UPDATED_NEW",
             )
             return int(response["Attributes"]["version"]["N"])
@@ -162,6 +212,7 @@ class DynamoTable:
                     **self._key(pk, sk),
                     "version": {"N": str(version)},
                     "body": {"S": body},
+                    **({"expiresAt": {"N": str(expires_at)}} if expires_at is not None else {}),
                 },
                 **condition,
             )
@@ -172,12 +223,23 @@ class DynamoTable:
         return version
 
     async def query(
-        self, pk: str, prefix: str = "", *, after: str | None = None, limit: int | None = None
+        self,
+        pk: str,
+        prefix: str = "",
+        *,
+        after: str | None = None,
+        limit: int | None = None,
+        start: str | None = None,
+        end: str | None = None,
     ) -> Page:
         values: dict[str, Any] = {":pk": {"S": pk}}
         condition = "pk = :pk"
         # `after` wins: a cursor is always inside the prefix and resumes past the last row read.
-        if prefix:
+        if start is not None or end is not None:
+            condition += " AND sk BETWEEN :start AND :end"
+            values[":start"] = {"S": start or prefix}
+            values[":end"] = {"S": end or prefix + "\uffff"}
+        elif prefix:
             condition += " AND begins_with(sk, :prefix)"
             values[":prefix"] = {"S": prefix}
         arguments: dict[str, Any] = {

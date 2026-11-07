@@ -30,6 +30,7 @@ class ApiContext:
     workflows: WorkflowService
     coordinator: WorkloadCoordinator
     workload_token: str
+    observation_token: str = ""
 
     @property
     def session_cookie(self) -> str:
@@ -95,3 +96,16 @@ async def workload_caller(
     expected = f"Bearer {context.workload_token}"
     if not authorization or not hmac.compare_digest(authorization.encode(), expected.encode()):
         raise ApiError(401, "UNAUTHENTICATED", "a workload token is required")
+
+
+async def observation_caller(
+    context: Context, authorization: Annotated[str | None, Header()] = None
+) -> None:
+    if (
+        not context.observation_token
+        or not authorization
+        or not hmac.compare_digest(
+            authorization.encode(), f"Bearer {context.observation_token}".encode()
+        )
+    ):
+        raise ApiError(401, "UNAUTHENTICATED", "a Collector ingest token is required")

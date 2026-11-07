@@ -24,10 +24,15 @@ from control_plane.domain.models import ResourceKind
 from control_plane.engine.context import Services
 from control_plane.engine.engine import Engine
 from control_plane.errors import ApiError
+from control_plane.observations import ObservationLoop
+from control_plane.otel_ingest import router as otel_router
 from control_plane.probes import AppProber, HttpAppProber, ProbeLoop
+from control_plane.public_probe import PublicProbeLoop
 from control_plane.seed import Seed, load_seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import DynamoTable, MemoryTable, Table
+from control_plane.telemetry import TraceMiddleware, get_telemetry
+from control_plane.telemetry_query import router as telemetry_router
 from control_plane.traffic import TrafficController, TrafficService
 from control_plane.workflows import WorkflowService
 from control_plane.workload.coordinator import WorkloadCoordinator
@@ -42,6 +47,8 @@ class Platform:
     context: ApiContext
     engine: Engine
     probe_loop: ProbeLoop
+    observation_loop: ObservationLoop
+    public_probe_loop: PublicProbeLoop | None = None
     clients: list[httpx.AsyncClient] = field(default_factory=list)
 
 
@@ -57,6 +64,7 @@ def assemble(
     prober: AppProber,
     auth: AuthService,
     workload_token: str,
+    observation_token: str = "",
 ) -> Platform:
     coordinator = WorkloadCoordinator(repo, seed, clock)
     services = Services(
@@ -79,9 +87,11 @@ def assemble(
             workflows=WorkflowService(repo, seed, clock, adapters),
             coordinator=coordinator,
             workload_token=workload_token,
+            observation_token=observation_token,
         ),
         engine=Engine(services),
         probe_loop=ProbeLoop(repo, seed, prober, clock),
+        observation_loop=ObservationLoop(repo, adapters, clock, coordinator),
     )
 
 
@@ -96,7 +106,10 @@ def build_platform(settings: Settings) -> Platform:
     clients: list[httpx.AsyncClient] = []
 
     def client(**kwargs: object) -> httpx.AsyncClient:
-        made = httpx.AsyncClient(timeout=10, **kwargs)  # type: ignore[arg-type]
+        async def propagate(request: httpx.Request) -> None:
+            request.headers.update(get_telemetry("control-plane").headers())
+
+        made = httpx.AsyncClient(timeout=10, event_hooks={"request": [propagate]}, **kwargs)  # type: ignore[arg-type]
         clients.append(made)
         return made
 
@@ -151,6 +164,15 @@ def build_platform(settings: Settings) -> Platform:
         prober=HttpAppProber(client(), seed, clock),
         auth=auth,
         workload_token=secret(settings.workload_token_secret),
+        observation_token=secret(settings.observation_token_secret)
+        if settings.observation_token_secret
+        else "",
+    )
+    unknown = set(settings.public_probe_served_by.values()) - set(seed.environments)
+    if unknown:
+        raise ValueError("public probe mapping contains unregistered environments")
+    platform.public_probe_loop = PublicProbeLoop(
+        repo, client(), clock, settings.public_probe_url, settings.public_probe_served_by
     )
     platform.clients = clients
     return platform
@@ -167,14 +189,18 @@ def _check_production(settings: Settings, seed: Seed) -> None:
 def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        telemetry = get_telemetry("control-plane")
         tasks = (
             [
                 asyncio.create_task(platform.engine.run()),
                 asyncio.create_task(platform.probe_loop.run()),
+                asyncio.create_task(platform.observation_loop.run()),
             ]
             if run_loops
             else []
         )
+        if run_loops and platform.public_probe_loop:
+            tasks.append(asyncio.create_task(platform.public_probe_loop.run()))
         try:
             yield
         finally:
@@ -182,6 +208,7 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
             await asyncio.gather(*(client.aclose() for client in platform.clients))
+            await asyncio.to_thread(telemetry.close)
 
     # API documents are for development; production answers only to the console.
     docs = platform.context.settings.environment == "local"
@@ -195,6 +222,9 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     )
     app.state.context = platform.context
     app.include_router(router)
+    app.include_router(otel_router)
+    app.include_router(telemetry_router)
+    app.add_middleware(TraceMiddleware, telemetry=get_telemetry("control-plane"))
 
     @app.exception_handler(ApiError)
     async def api_error(_: Request, error: ApiError) -> JSONResponse:

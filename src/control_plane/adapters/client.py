@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -109,6 +110,7 @@ class AdapterClient:
     def __init__(self, http: httpx.AsyncClient, token: str) -> None:
         self.http = http
         self.headers = {"Authorization": f"Bearer {token}"}
+        self._reads: dict[str, asyncio.Task[dict[str, Any]]] = {}
 
     async def capabilities(self) -> dict[str, Any]:
         return await self._call("GET", "/v1/capabilities")
@@ -117,7 +119,15 @@ class AdapterClient:
         return MigrationView(await self._call("POST", "/v1/migrations", body=body, key=key))
 
     async def migration(self, migration_id: str) -> MigrationView:
-        return MigrationView(await self._call("GET", f"/v1/migrations/{migration_id}"))
+        task = self._reads.get(migration_id)
+        if task is None or task.done():
+            task = asyncio.create_task(self._call("GET", f"/v1/migrations/{migration_id}"))
+            self._reads[migration_id] = task
+        try:
+            return MigrationView(await asyncio.shield(task))
+        finally:
+            if task.done() and self._reads.get(migration_id) is task:
+                self._reads.pop(migration_id, None)
 
     async def act(self, migration_id: str, key: str, body: dict[str, Any]) -> str:
         """Returns the operation id. Accepted is not executed: poll `operation`."""

@@ -5,6 +5,7 @@ The browser calls `/api/...`; the gateway, or Vite in development, removes the p
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
@@ -15,6 +16,7 @@ from control_plane.api.dependencies import (
     CheckedSession,
     Context,
     CurrentSession,
+    observation_caller,
     workload_caller,
 )
 from control_plane.api.idempotency import once
@@ -28,6 +30,7 @@ from control_plane.api.schemas import (
     Heartbeat,
     HoldView,
     Me,
+    PreparationReport,
     ResourceView,
     StageView,
     WorkflowCommand,
@@ -37,6 +40,8 @@ from control_plane.api.schemas import (
 )
 from control_plane.domain.models import ResourceKind, ResourceState, Workflow
 from control_plane.errors import ApiError
+from control_plane.observation_projection import freshness, present, timestamp
+from control_plane.observations import ObservationStore, observation_state
 from control_plane.workflows import CommandInput
 
 router = APIRouter()
@@ -242,6 +247,7 @@ async def heartbeat(scope: str, body: Heartbeat, context: Context) -> DirectiveV
         generation=body.generation,
         state=body.state,
         in_flight=body.in_flight,
+        active_web_sockets=body.active_web_sockets,
         redis_route=body.redis_route,
         redis_route_generation=body.redis_route_generation,
         stale_connections=body.stale_connections,
@@ -276,46 +282,194 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
     repo = context.repo
     hold, _ = await repo.hold(context.seed.scope)
     actors = await context.coordinator.actor_statuses(hold.generation)
+    store = ObservationStore(repo.table)
+    resources = []
+    for kind in ResourceKind:
+        state = await repo.resource(workflow.id, kind)
+        resources.append(
+            _resource(state, await store.latest(workflow.id, kind.value), context.clock.now())
+        )
+    for resource in resources:
+        if resource.kind is ResourceKind.OBJECT_STORAGE:
+            resource.details.setdefault("object", {})["expectedApps"] = (
+                context.seed.resources.object.expected_apps
+            )
+    preparation = {}
+    for preparation_kind in ("INFRA", "COMPUTE"):
+        saved = await store.latest(workflow.id, preparation_kind)
+        preparation[preparation_kind] = {
+            "data": saved.get("data") if saved else None,
+            "observation": observation_state(saved, context.clock.now()),
+        }
+    summary = await store.latest(workflow.id, "PUBLIC")
+    public_probe = summary.get("data") if summary else None
+    if public_probe:
+        public_probe["freshness"] = freshness(public_probe.get("lastSampleAt"), context.clock.now())
+    business = []
+    for env in (workflow.source_env, workflow.target_env):
+        probe = await repo.latest_business_probe(workflow.id, env)
+        business.append(
+            {
+                "env": env,
+                "latest": probe.model_dump(mode="json", by_alias=True) if probe else None,
+                "freshness": freshness(
+                    probe.finished_at if probe else None, context.clock.now(), 30
+                ),
+                "collectionState": "SKIPPED_HELD"
+                if hold.desired.value == "HOLD" and hold.workflow_id == workflow.id
+                else "ENABLED",
+            }
+        )
+    commands = [
+        {
+            "resource": command.resource.value,
+            "action": command.action,
+            "phase": command.phase.value,
+            "operationId": command.operation_id,
+            "status": command.operation_status,
+            "transitionId": command.body.get("transitionId"),
+            "attempt": command.attempt,
+            "errorCode": (command.error or {}).get("code"),
+            "observation": command.observation,
+        }
+        for command in await repo.commands(workflow.id)
+    ]
+    active = await repo.active_workflow_id()
+    monitoring = not workflow.status.terminal or (
+        workflow.finished_at is not None
+        and context.clock.now() <= workflow.finished_at + timedelta(seconds=60)
+    )
+    live = monitoring and (
+        active == workflow.id or (active is None and hold.workflow_id == workflow.id)
+    )
+    hold_view = HoldView(
+        is_live=live,
+        redis_route=hold.redis_route,
+        redis_endpoint=hold.redis_endpoint,
+        redis_route_generation=hold.redis_route_generation,
+        desired=hold.desired if live else "UNKNOWN",
+        generation=hold.generation if live else 0,
+        held_since=hold.held_since if live else None,
+        requested_at=hold.requested_at if live else None,
+        released_at=hold.released_at if live else None,
+        observed_at=context.clock.now() if live else None,
+        actors=[
+            ActorView(
+                actor_id=a.actor_id,
+                state=a.state,
+                in_flight=a.in_flight,
+                reported=a.reported,
+                expected=a.expected,
+                observed_at=a.observed_at,
+                active_web_sockets=a.active_web_sockets,
+            )
+            for a in actors
+        ]
+        if live
+        else [],
+    )
+    if not live:
+        app = await store.latest(workflow.id, "APP")
+        if app:
+            saved_app = app["data"]
+            hold_view = HoldView(
+                is_live=False,
+                redis_route=saved_app.get("redisRoute", "DIRECT"),
+                redis_route_generation=saved_app.get("redisRouteGeneration", 0),
+                desired=saved_app["desired"],
+                generation=saved_app["generation"],
+                held_since=saved_app.get("heldSince"),
+                requested_at=saved_app.get("requestedAt"),
+                released_at=saved_app.get("releasedAt"),
+                observed_at=app["lastSuccessAt"],
+                actors=[ActorView.model_validate(a) for a in saved_app["actors"]],
+            )
     return WorkflowDetail(
+        preparation=preparation,
+        public_probe=public_probe,
+        business_probes=business,
+        commands=commands,
         workflow=workflow,
         allowed_commands=allowed_commands(workflow),
         stages=[StageView.of(stage) for stage in await repo.stages(workflow.id)],
-        resources=[_resource(state) for state in await repo.resources(workflow.id)],
+        resources=resources,
         traffic=await repo.traffic_records(workflow.id),
-        hold=HoldView(
-            desired=hold.desired,
-            generation=hold.generation,
-            held_since=hold.held_since,
-            actors=[
-                ActorView(
-                    actor_id=actor.actor_id,
-                    state=actor.state,
-                    in_flight=actor.in_flight,
-                    reported=actor.reported,
-                    expected=actor.expected,
-                    observed_at=actor.observed_at,
-                )
-                for actor in actors
-            ],
-            redis_route=hold.redis_route,
-            redis_endpoint=hold.redis_endpoint,
-            redis_route_generation=hold.redis_route_generation,
-        ),
+        hold=hold_view,
     )
 
 
-def _resource(state: ResourceState) -> ResourceView:
-    status: dict[str, Any] = state.last_status or {}
+def _resource(
+    state: ResourceState, snapshot: dict[str, Any] | None = None, now: datetime | None = None
+) -> ResourceView:
+    # The observer owns separate keys and never overwrites engine state.
+    if snapshot and (snapshot.get("data") or {}).get("migrationId") not in (
+        None,
+        state.migration_id,
+    ):
+        snapshot = None
+    status: dict[str, Any] = (snapshot or {}).get("data") or state.last_status or {}
+    if now:
+        status = present(status, now)
+    observed = status.get("observed") or {}
     return ResourceView(
         kind=state.kind,
         migration_id=state.migration_id,
         lifecycle=status.get("lifecycle"),
         health=status.get("health"),
-        route=state.last_route,
+        route=observed.get("route", state.last_route),
         phase=status.get("phase"),
-        target_writes_possible=state.target_writes_possible,
+        target_writes_possible=bool(
+            observed.get("targetWritesPossible", state.target_writes_possible)
+        ),
         readiness=status.get("readiness"),
+        observed_at=observed.get("observedAt"),
+        progress=status.get("progress"),
+        checks=status.get("checks") or [],
         rollback=status.get("rollback"),
-        details=status.get("details"),
-        observed_at=state.last_status_at,
+        business_write_access=observed.get("businessWriteAccess"),
+        details=status.get("details") or {},
+        replication=status.get("replication"),
+        routing=status.get("routing"),
+        active_operation_id=status.get("activeOperationId"),
+        transition_id=status.get("transitionId"),
+        observation=observation_state(snapshot, now) if now else {},
     )
+
+
+@router.get("/v1/workflows/{workflow_id}/observations")
+async def observations(
+    workflow_id: str,
+    context: Context,
+    _: CurrentSession,
+    since: datetime | None = None,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+) -> dict[str, Any]:
+    await _workflow(context, workflow_id)
+    now = context.clock.now()
+    since = since or now - timedelta(minutes=5)
+    if since.tzinfo is None or since < now - timedelta(hours=24) or since > now:
+        raise ApiError(
+            422, "INVALID_RANGE", "since must be timezone-aware and within the last 24 hours"
+        )
+    if cursor and (
+        len(cursor) > 160 or not cursor.startswith("OBS#") or len(cursor.split("#")) != 3
+    ):
+        raise ApiError(422, "INVALID_CURSOR", "invalid observation cursor")
+    if cursor:
+        cursor_at = timestamp(cursor.split("#")[1])
+        if cursor_at is None or not since <= cursor_at <= now:
+            raise ApiError(422, "INVALID_CURSOR", "cursor is outside the requested time range")
+    rows, after = await ObservationStore(context.repo.table).history(
+        workflow_id, since=since, until=now, after=cursor, limit=limit
+    )
+    return {"observations": rows, "nextCursor": after}
+
+
+@router.post(
+    "/internal/workflows/{workflow_id}/preparation", dependencies=[Depends(observation_caller)]
+)
+async def preparation_report(
+    workflow_id: str, body: PreparationReport, context: Context
+) -> dict[str, str]:
+    raise ApiError(410, "USE_OTLP", "publish preparation snapshots through the OTEL Collector")
