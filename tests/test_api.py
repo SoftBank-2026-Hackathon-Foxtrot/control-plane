@@ -11,7 +11,7 @@ import pytest
 
 from control_plane.auth import AuthService, safe_return_path
 from control_plane.config import Settings
-from control_plane.domain.models import ActorState
+from control_plane.domain.models import ActorState, ResourceKind
 from control_plane.main import create_api
 from tests.conftest import SETTINGS, World
 
@@ -254,6 +254,26 @@ async def test_creating_a_workflow_returns_the_whole_picture(console: Console) -
     ]
     assert detail["allowedCommands"] == ["APPROVE", "ABORT"]
     assert detail["hold"]["desired"] == "RUN"
+
+
+async def test_resource_details_expose_adapter_rollback_evidence(
+    console: Console, world: World
+) -> None:
+    await console.login()
+    detail = await console.create()
+    workflow_id = detail["workflow"]["id"]
+    resource = await world.repo.resource(workflow_id, ResourceKind.DATABASE)
+    status = {
+        "rollback": {"method": "REVERSE_SYNC", "reasons": ["REVERSE_LAG"]},
+        "readiness": {"rollback": {"result": "UNKNOWN", "reasons": ["REVERSE_LAG"]}},
+        "details": {"database": {"reverseReplication": {"status": "SYNCING", "lagBytes": 512}}},
+    }
+    await world.repo.save_resource(workflow_id, resource.model_copy(update={"last_status": status}))
+    response = await console.http.get(f"/v1/workflows/{workflow_id}")
+    assert response.status_code == 200
+    database = next(r for r in response.json()["resources"] if r["kind"] == "DATABASE")
+    for field in ("rollback", "readiness", "details"):
+        assert database[field] == status[field]
 
 
 async def test_one_migration_at_a_time(console: Console) -> None:

@@ -17,6 +17,8 @@ resources:
     profile: postgres-managed-logical-pgbouncer-v2
     sourceRef: db:goods-rds
     targetRef: db:goods-cloudsql
+    # Use REVERSE_REQUIRED when this profile advertises it in /v1/capabilities.
+    # The DB agent then owns reverse CDC and the final catch-up before rollback.
     policy: {rollbackMode: BEFORE_TARGET_WRITE, maxQuiesceSeconds: 300}
     catalog:
       alias: appdb

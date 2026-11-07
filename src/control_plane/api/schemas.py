@@ -90,6 +90,8 @@ class ResourceView(Model):
     phase: str | None
     target_writes_possible: bool
     readiness: dict[str, Any] | None
+    rollback: dict[str, Any] | None = None
+    details: dict[str, Any] | None = None
     observed_at: Any
 
 

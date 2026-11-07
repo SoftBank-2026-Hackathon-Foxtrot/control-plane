@@ -138,6 +138,7 @@ class FakeAdapter:
         self.bindings: dict[str, dict[str, Any]] = {}
         self.route_override: str | None = None
         self.retention_seconds = 0.0
+        self.reverse_supported = False
         self.binding_polls = 0
 
     def transport(self) -> httpx.MockTransport:
@@ -209,6 +210,17 @@ class FakeAdapter:
             profiles.append(
                 {"kind": self.kind.value, "profile": "postgres-managed-logical-pgbouncer-v1"}
             )
+        for entry in profiles:
+            entry["actions"] = list(AFTER)
+            modes = ["REVERSE_REQUIRED"]
+            if self.kind is ResourceKind.DATABASE:
+                modes = ["BEFORE_TARGET_WRITE"]
+                if (
+                    entry["profile"] == "postgres-managed-logical-pgbouncer-v2"
+                    and self.reverse_supported
+                ):
+                    modes.append("REVERSE_REQUIRED")
+            entry["rollbackModes"] = modes
         return {"apiVersion": "v1", "profiles": profiles}
 
     # ---- plans -------------------------------------------------------------------------------
@@ -268,15 +280,19 @@ class FakeAdapter:
         if migration.health != "OK":
             return ["RECONCILE"]
         actions = list(ALLOWED[migration.lifecycle])
+        reverse = self.reverse_supported and migration.plan["policy"]["rollbackMode"] == (
+            "REVERSE_REQUIRED"
+        )
         if migration.lifecycle == "READY":
             actions = ["QUIESCE"]
             actions.append("CANCEL" if migration.transition_state == "NONE" else "ROLLBACK")
         if migration.lifecycle == "ACTIVE":
-            actions = ["FINALIZE"]  # the DMS profile has no way back
+            actions = ["ROLLBACK", "FINALIZE"] if reverse else ["FINALIZE"]
         if (
             migration.plan["profile"] == "postgres-managed-logical-pgbouncer-v2"
             and migration.lifecycle == "SWITCHED"
             and migration.target_writes
+            and not reverse
         ):
             actions = ["RESUME"]
         if migration.lifecycle == "CANCELLED":

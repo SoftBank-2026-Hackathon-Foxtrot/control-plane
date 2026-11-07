@@ -91,6 +91,13 @@ class ResourceProfile(ABC):
     def rollback_extra(self, mode: str) -> dict[str, Any]:
         return {}
 
+    def rollback_needs_ready_after_hold(self, seed: ResourceSeed) -> bool:
+        return False
+
+    def required_rollback_mode(self, seed: ResourceSeed) -> str | None:
+        """An opt-in policy the selected adapter profile must explicitly advertise."""
+        return None
+
     def unknown_budget(self, timings: Timings, seed: ResourceSeed) -> UnknownBudget:
         return UnknownBudget(attempts=timings.unknown_retry_limit)
 
@@ -125,6 +132,12 @@ class DatabaseProfile(ResourceProfile):
 
     def check_before_hold(self, seed: ResourceSeed) -> bool:
         return self.selected_profile(seed) == ATOMIC_LOGICAL_PROFILE
+
+    def rollback_needs_ready_after_hold(self, seed: ResourceSeed) -> bool:
+        return seed.policy.rollback_mode == "REVERSE_REQUIRED"
+
+    def required_rollback_mode(self, seed: ResourceSeed) -> str | None:
+        return "REVERSE_REQUIRED" if self.rollback_needs_ready_after_hold(seed) else None
 
     def needs_held_evidence(self, action: str, seed: ResourceSeed) -> bool:
         if self.check_before_hold(seed):

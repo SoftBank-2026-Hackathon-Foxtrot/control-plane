@@ -315,5 +315,7 @@ def _resource(state: ResourceState) -> ResourceView:
         phase=status.get("phase"),
         target_writes_possible=state.target_writes_possible,
         readiness=status.get("readiness"),
+        rollback=status.get("rollback"),
+        details=status.get("details"),
         observed_at=state.last_status_at,
     )

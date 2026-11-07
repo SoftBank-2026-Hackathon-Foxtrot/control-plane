@@ -72,8 +72,13 @@ class DatabaseSeed(ResourceSeed):
                 raise ValueError("DMS profile needs replicationRef and catalog.dmsJob")
         elif self.replication_ref is not None or self.catalog.dms_job is not None:
             raise ValueError("managed logical profile rejects replicationRef and catalog.dmsJob")
-        if self.policy.rollback_mode != "BEFORE_TARGET_WRITE":
-            raise ValueError("database requires BEFORE_TARGET_WRITE; reverse replication is absent")
+        if self.policy.rollback_mode not in {"BEFORE_TARGET_WRITE", "REVERSE_REQUIRED"}:
+            raise ValueError("unsupported database rollbackMode")
+        if (
+            self.policy.rollback_mode == "REVERSE_REQUIRED"
+            and self.profile != ATOMIC_LOGICAL_PROFILE
+        ):
+            raise ValueError("database REVERSE_REQUIRED needs the atomic logical v2 profile")
         budget = self.policy.max_quiesce_seconds
         if not 1 <= budget <= 300 or not budget.is_integer():
             raise ValueError("database maxQuiesceSeconds must be an integer from 1 to 300")

@@ -23,7 +23,49 @@ DB 쪽 ECS Task는 하나입니다. API와 Worker를 한 컨테이너에 두고,
 
 오케스트레이터는 `QUIESCE` 뒤, `CUTOVER` 직전에 실제 앱·업무 Worker의 정지를 확인하고 `quiesceRef`를 발급·갱신합니다. DB 쓰기 경로가 열린 것을 `RESUME`으로 확인한 뒤 앱 업무를 재개합니다. DB의 `CUTOVER`·`ROLLBACK`에는 실제 HELD 근거가 필요합니다. 확인 전용 명령에 쓰는 참조로 이 검사를 우회할 수 없습니다.
 
-현재 관리형 DB 프로필은 대상 쓰기 전 원본 복귀만 지원합니다. 대상 쓰기 후 복귀와 역방향 CDC는 지원하지 않습니다.
+기본 정책 `BEFORE_TARGET_WRITE`는 대상 쓰기 전 원본 복귀만 허용합니다.
+DB v2 에이전트가 역방향 CDC를 구현한 경우 아래 설정으로 대상 쓰기 후 복귀를 요청할 수 있습니다.
+
+## 역방향 CDC 연동
+
+```yaml
+resources:
+  database:
+    profile: postgres-managed-logical-pgbouncer-v2
+    policy: {rollbackMode: REVERSE_REQUIRED, maxQuiesceSeconds: 300}
+    # sourceRef, targetRef, catalog 등은 기존 설정 유지
+```
+
+새 HTTP 경로는 필요하지 않습니다. 기존 `POST /v1/workflows/{id}/commands`에
+`command: ROLLBACK_RESOURCE`, `resourceId: DATABASE`, `mode: normal`, 최신 `expectedVersion`을
+보냅니다. 실행 중이면 먼저 `HALT`합니다. 완료된 워크플로나 FINALIZE가 끝난 리소스에 대한
+복귀를 새로 허용하는 변경은 아닙니다.
+
+컨트롤플레인과 DB 에이전트는 기존 공통 API 계약을 다음과 같이 사용합니다.
+
+- `/v1/capabilities`의 **선택한 v2 프로필**에 `kind: DATABASE`,
+  `rollbackModes: [..., REVERSE_REQUIRED]`, `actions: [..., ROLLBACK]`이 있어야 합니다.
+  없으면 워크플로 생성 전에 `UNSUPPORTED_ROLLBACK_MODE`로 거절합니다. v1과 DMS에는 허용하지 않습니다.
+- 계획의 `policy.rollbackMode`를 그대로 전달합니다. 역방향 복제의 준비·시작·유지·정리는
+  에이전트가 기존 전환 명령과 FINALIZE 안에서 수행합니다. 별도 CDC 시작 명령은 보내지 않습니다.
+- 에이전트는 복귀 진입이 가능한 상태에서 `allowedActions`에 `ROLLBACK` 또는 사전 확인용
+  `QUIESCE`를 제공합니다. 컨트롤플레인은 앱과 Worker를 HELD로 확인하고 새 정지 근거를 게시한 뒤
+  `readiness.rollback: PASS`, `health: OK`, 실행 중인 작업 없음, `ROLLBACK` 허용을 확인합니다.
+  `FAIL`이면 차단 이유를 남기고 멈춥니다. UNKNOWN·누락은 `command_timeout`까지 기다린 뒤 멈춥니다.
+  기다리는 동안 정지 근거를 갱신하며, 이 단계의 실패나 시간 초과에는 앱을 자동 재개하지 않습니다.
+- `ROLLBACK`에는 기존 `transitionId`, 최신 `quiesceRef`, `expectedRevision`과 멱등 키를 보냅니다.
+  Redis 전용 `mode` 필드는 DB 에이전트에 보내지 않습니다. 대상 쓰기 차단, 마지막 변경까지 원본 반영,
+  복제 방향 정리, sequence와 DB 경로·쓰기 권한 복귀는 에이전트가 수행하고 안전성을 다시 검사해야 합니다.
+  준비 상태 PASS나 복제 지연 0만으로 최종 동기화가 끝났다고 간주해서는 안 됩니다.
+- 기존 v2 계약대로 `ROLLBACK` 성공은 `ROLLED_BACK_HELD`, `RESUME(expectedLocation: SOURCE)`
+  성공은 `RESTORED`를 반환합니다. 컨트롤플레인은 그 후 앱을 재개하고 양쪽 환경의 업무 검사를 수행합니다.
+  응답 유실과 UNKNOWN은 기존 조회·RECONCILE 경로로 복구합니다.
+- 콘솔의 리소스 응답에 에이전트의 `rollback`, `details`를 그대로 추가 전달합니다.
+  역방향 CDC 상세 필드의 이름은 에이전트 계약을 따릅니다. 컨트롤플레인은 이 필드로 안전성을 추측하지 않고
+  `readiness.rollback`을 사용합니다. DB의 데이터 유실 허용 `failure` 모드는 추가하지 않습니다.
+
+이 연동은 컨트롤플레인의 정책·순서·복구 검사로 검증합니다. 새 DB 에이전트와 실제 역방향 CDC의
+통합 검증은 해당 에이전트 구현을 연결한 뒤 별도로 수행해야 합니다.
 
 ## 설정
 

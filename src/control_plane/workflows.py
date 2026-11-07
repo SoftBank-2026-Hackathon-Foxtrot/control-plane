@@ -101,6 +101,21 @@ class WorkflowService:
                     f"{kind.value} does not offer {selected}",
                     sorted(str(name) for name in offered),
                 )
+            required_mode = profile.required_rollback_mode(self.seed.resources.of(kind))
+            if required_mode is not None:
+                supported = any(
+                    entry.get("profile") == selected
+                    and entry.get("kind") == kind.value
+                    and required_mode in (entry.get("rollbackModes") or [])
+                    and "ROLLBACK" in (entry.get("actions") or [])
+                    for entry in capabilities.get("profiles", [])
+                )
+                if not supported:
+                    raise ApiError(
+                        422,
+                        "UNSUPPORTED_ROLLBACK_MODE",
+                        f"{selected} must advertise {required_mode} and ROLLBACK",
+                    )
 
     async def apply(self, workflow_id: str, command: CommandInput, *, actor: str) -> Workflow:
         workflow = await self.repo.workflow(workflow_id)
