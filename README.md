@@ -12,6 +12,7 @@ Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)
 - 온프렘 PC 등록과 앱 배포: [docs/onprem-platform-deployment.md](docs/onprem-platform-deployment.md)
 - DB 에이전트 연결: [docs/native-db-agent.md](docs/native-db-agent.md). 기본은 PostgreSQL 직접 논리 복제입니다. DMS 작업과 Promote를 사용하지 않습니다.
 - 콘솔의 Proxy·Worker 상태와 복제량: [모듈 관측값 전달](docs/module-observations.md).
+- 실제 AWS ↔ GCP E2E 실행 기록(11-07~08, 워크플로 5개, DB 쓰기 정지 1.4초·Redis 정지 0.1초·트래픽 자동 되돌림): [docs/e2e/2026-11-07-08.md](docs/e2e/2026-11-07-08.md)
 
 ## 구조
 
