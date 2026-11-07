@@ -13,6 +13,7 @@ from control_plane.auth import AuthService, safe_return_path
 from control_plane.config import Settings
 from control_plane.domain.models import ActorState, ResourceKind
 from control_plane.main import create_api
+from control_plane.seed import Environment
 from tests.conftest import SETTINGS, World
 
 ORIGIN = "https://platform.test"
@@ -254,6 +255,22 @@ async def test_creating_a_workflow_returns_the_whole_picture(console: Console) -
     ]
     assert detail["allowedCommands"] == ["APPROVE", "ABORT"]
     assert detail["hold"]["desired"] == "RUN"
+
+
+async def test_console_can_select_and_plan_a_staged_onprem_target(console: Console) -> None:
+    console.world.seed.environments["onprem"] = Environment(
+        app_url="https://onprem.test", traffic_pool="onprem", actors={}
+    )
+    await console.login()
+    apps = (await console.http.get("/v1/applications")).json()
+    assert {env["name"] for env in apps[0]["environments"]} == {"aws", "gcp", "onprem"}
+    response = await console.http.post(
+        "/v1/workflows",
+        json={"sourceEnv": "aws", "targetEnv": "onprem"},
+        headers=console.change_headers(),
+    )
+    assert response.status_code == 201
+    assert response.json()["workflow"]["status"] == "PLANNED"
 
 
 async def test_resource_details_expose_adapter_rollback_evidence(

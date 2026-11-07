@@ -220,6 +220,7 @@ class ProbeLoop:
                 *(
                     self.prober.business(env, definition.app_url)
                     for env, definition in self.seed.environments.items()
+                    if definition.actors
                 )
             )
         for probe in probes:
@@ -240,6 +241,7 @@ class ProbeLoop:
             *(
                 self._light_env(active[0], env, definition.app_url)
                 for env, definition in self.seed.environments.items()
+                if definition.actors
             )
         )
 

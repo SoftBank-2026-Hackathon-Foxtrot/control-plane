@@ -233,6 +233,13 @@ seed에 온프렘 actor를 추가하면 클라우드 간 전환도 그 actor의 
 독립 운영할 때는 별도 앱 scope와 그 scope를 사용하는 바인딩을 구성한다.
 온프렘 준비·배포 API가 migration seed나 adapter resource를 자동 생성하지는 않는다.
 
+온프렘 앱을 독립 DB로 띄워 두고 **계획만 먼저 등록**하려면 실제 `appUrl`과 전환 시 사용할
+`trafficPool`을 `environments.onprem`에 지정하고 `actors: {}`를 명시한다. 애플리케이션
+화면에서 `onprem`을 선택해 PLANNED 요청을 만들 수 있다. 이때 클라우드 간 이전의 HOLD와
+업무·지연 검사에는 온프렘이 참여하지 않는다. 이 설정은 **공유 DB·Redis·객체 경로를 쓰는
+온프렘 프로세스가 없을 때만** 사용한다. 온프렘 계획을 승인하면 PREPARE가
+`ONPREM_ACTORS_REQUIRED`로 중단된다. 실제 이전 전에 API·worker와 대상 리소스를 등록한다.
+
 온프렘을 출발지나 목적지로 선택하면 마이그레이션 PREPARE가 **모든 대상**을 먼저 검사한다.
 참조 방식은 양쪽 `environments.<이름>.resources`에 서로 다른 대상 참조가 있어야 한다.
 DB·Redis의 직접 접속 방식은 해당 요청의 `resources`에 명시한 source/target 쌍을 사용한다.
