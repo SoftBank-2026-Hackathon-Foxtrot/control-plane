@@ -92,3 +92,14 @@ uv run uvicorn control_plane.security_review.demo:create_demo --factory --host 1
 ## 이후 확장
 
 현재는 seed의 앱 한 개를 서버에서 고정한다. 앱 선택, 전체 effective IAM 평가, 객체 허용/거부 테스트, durable jobs, 장기 감사 저장소는 별도 구현이다. AI는 비밀을 제거한 검사 근거의 설명/변경안 초안에만 붙일 수 있다. AI가 판정·권한 적용·전환 승인을 수행하지 않는다.
+
+## 2026-11-08 조회 전용 운영 설정
+
+- AWS Task Role: `foxtrot-control-plane-task`의 `security-review-read-only` 인라인 정책. `chiikawa-aws-3e3d-app` 역할의 `iam:GetRolePolicy`만 허용한다.
+- GCP 조회 계정: `foxtrot-security-reader@foxtrot-513413.iam.gserviceaccount.com`. 두 지정 버킷에만 `roles/iam.securityReviewer`를 부여했다. 프로젝트 전체 권한은 추가하지 않았다. 이 역할의 버킷 정책·목록 메타데이터 조회 권한을 사용하며 객체 내용 읽기·쓰기·삭제나 IAM 변경은 허용하지 않는다.
+- 인증: Secrets Manager의 `foxtrot/platform/gcp-security-reader-credentials`를 ECS secrets의 `SECURITY_GCP_CREDENTIALS`로 주입한다. Task execution role에는 해당 secret 하나의 조회 권한만 추가했다.
+- 대상: 기존 chiikawa 예시 설정과 같은 앱 역할·앱 버킷·데모 버킷. `CONTROL_PLANE_SECURITY_REVIEW_CONFIG_JSON`에 `readOnly: true`를 지정한다. 기존 허용 사용자 한 명을 유지한다.
+- 실제 ECS 일회성 조회에서 AWS 정책·GCP 두 버킷 조회와 앱 `/readyz` HTTP 200을 확인했다. 컨트롤 플레인 테이블에는 `security-readonly-setup` 수행자로 첫 결과를 기록했다. 결과는 기준 정책·필수 권한 통과, 추가 버킷 접근 1건이다.
+- 기존 앱 계정과 다른 주체의 버킷 권한은 전후 동일했다. 조회 계정의 `getIamPolicy`는 허용되고 `setIamPolicy`, 객체 내용 읽기·생성·삭제는 허용되지 않음을 `testPermissions`로 확인했다.
+
+후속 ECS Task Definition 배포에서도 보안 대상 환경변수와 reader secret 연결을 유지해야 한다. `latest` 이미지는 덮어쓰지 않으며, 이번 서버 이미지는 당시 실행 이미지에 보안 모듈만 덧붙였다. 기존 마이그레이션·배포·프록시 코드는 교체하지 않았다.
