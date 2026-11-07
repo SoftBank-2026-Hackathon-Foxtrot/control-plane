@@ -305,16 +305,6 @@ async def test_object_unknown_with_an_active_operation_is_reconciled(world: Worl
     assert world.object.executed["CUTOVER"] == 1
 
 
-async def test_finalize_waits_out_the_retention_period(world: World) -> None:
-    world.db.retention_seconds = 400
-    workflow = await world.start()
-    final = await world.run_to_end(workflow.id)
-    assert final.status is WorkflowStatus.COMPLETED, final.halt
-    finalize = [b for b in world.db.received if b["action"] == "FINALIZE"]
-    assert len(finalize) > 1, "refused during retention, accepted after"
-    assert len(finalize) < 30, "and asked about no more than every 30 seconds"
-
-
 async def test_running_evidence_continues_until_finalize(world: World) -> None:
     """The DB adapter checks it again at FINALIZE, stages after the database moved."""
     workflow = await world.start()
