@@ -44,6 +44,23 @@ async def check_routes(ctx: StageContext) -> Outcome:
     return Passed()
 
 
+async def _earlier_binding(ctx: StageContext) -> str | None:
+    """The DB binding the newest earlier workflow of this deployment registered, if any."""
+    repo = ctx.services.repo
+    earlier = []
+    for workflow_id in await repo.workflow_ids():
+        if workflow_id == ctx.workflow.id:
+            continue
+        workflow = await repo.workflow(workflow_id)
+        if workflow is not None:
+            earlier.append(workflow)
+    for workflow in sorted(earlier, key=lambda w: w.created_at, reverse=True):
+        for resource in await repo.resources(workflow.id):
+            if resource.kind is ResourceKind.DATABASE and resource.binding_ref:
+                return resource.binding_ref
+    return None
+
+
 class Prepare:
     """Applications up, resources registered, one plan per resource, every PREPARE passed."""
 
@@ -105,8 +122,12 @@ class Prepare:
         client = ctx.client(kind)
         binding_id = ctx.stage.data.get("binding_id")
         if binding_id is None:
-            # The key belongs to the application, not the workflow: a later migration of the same
-            # application finds the binding it already has.
+            # A later migration of the same application (the way back, or onward) keeps the binding
+            # an earlier workflow registered. Registering again under the same key with the new
+            # source would be refused as a different body (IDEMPOTENCY_CONFLICT).
+            binding_id = await _earlier_binding(ctx)
+        if binding_id is None:
+            # The key belongs to the application, not the workflow.
             binding_id = await client.register_binding(
                 f"binding:{ctx.seed.application}:{catalog.alias}",
                 {
