@@ -426,8 +426,8 @@ class Finalize:
                     kind,
                     "FINALIZE",
                     expected=expected_after("FINALIZE"),
-                    # The DB adapter lists FINALIZE but refuses it during its retention period.
-                    wait_codes=frozenset({"RETENTION_ACTIVE"}),
+                    # The adapters have no waiting period of their own: FINALIZE goes when this
+                    # stage is approved. Their remaining checks may still take a moment.
                     not_allowed_timeout=ctx.seed.timings.finalize_timeout,
                 ),
             )

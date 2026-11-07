@@ -137,7 +137,6 @@ class FakeAdapter:
         self.unreachable = False
         self.bindings: dict[str, dict[str, Any]] = {}
         self.route_override: str | None = None
-        self.retention_seconds = 0.0
         self.reverse_supported = False
         self.binding_polls = 0
 
@@ -435,12 +434,9 @@ class FakeAdapter:
         return _json(202, accepted)
 
     def _finalize_refusal(self, migration: Migration) -> tuple[str, str] | None:
-        """`check_finalize`: retention, then fresh and stable RUNNING evidence."""
+        """`check_finalize`: fresh and stable RUNNING evidence (no waiting period)."""
         if migration.lifecycle != "ACTIVE":
             return None
-        resumed = migration.resumed_at or self.clock.now()
-        if (self.clock.now() - resumed).total_seconds() < self.retention_seconds:
-            return "RETENTION_ACTIVE", "the rollback retention period is not over"
         if not self._running_is_stable(migration):
             return "PRECONDITION_FAILED", "fresh business and stability evidence is needed"
         return None

@@ -45,7 +45,7 @@ class Command:
     not_allowed_timeout: float | None = None
     """How long to wait for the adapter to allow it."""
     wait_codes: frozenset[str] = frozenset()
-    """Refusals that only mean "not yet", such as a retention period: ask again later."""
+    """Refusals that only mean "not yet": ask again later."""
     wait_interval: float = 30
 
     @property
