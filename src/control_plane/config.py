@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     github_allowed_ids: list[int] = []
     session_hours: int = 8
     auth_disabled: bool = False
+    seed_owner_id: str = ""
+    """Explicit owner of the legacy seed. Blank keeps it hidden from signed-in users."""
     """Skips login for a local console. Refused outside `environment=local`."""
 
     @model_validator(mode="after")

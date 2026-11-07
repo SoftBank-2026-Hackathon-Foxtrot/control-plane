@@ -89,6 +89,7 @@ FINALIZE_STAGE = stage_index(StageKind.FINALIZE)
 
 SETTINGS = Settings(
     environment="local",
+    seed_owner_id="github:4242",
     public_url="https://platform.test",
     allowed_origins=["https://platform.test"],
     _env_file=None,  # type: ignore[call-arg]

@@ -35,7 +35,7 @@ from control_plane.api.schemas import (
     Workspace,
     allowed_commands,
 )
-from control_plane.domain.models import ResourceKind, ResourceState, Workflow
+from control_plane.domain.models import ResourceKind, ResourceState, Session, Workflow
 from control_plane.errors import ApiError
 from control_plane.workflows import CommandInput
 
@@ -119,7 +119,9 @@ async def workspaces(session: CurrentSession) -> list[Workspace]:
 
 # ---- what is managed -------------------------------------------------------------------------
 @router.get("/v1/applications", response_model_by_alias=True)
-async def applications(_: CurrentSession, context: Context) -> list[ApplicationView]:
+async def applications(session: CurrentSession, context: Context) -> list[ApplicationView]:
+    if not _owns_seed(context, session):
+        return []
     seed = context.seed
     return [
         ApplicationView(
@@ -136,10 +138,10 @@ async def applications(_: CurrentSession, context: Context) -> list[ApplicationV
 
 # ---- workflows --------------------------------------------------------------------------------
 @router.get("/v1/workflows", response_model_by_alias=True)
-async def list_workflows(_: CurrentSession, context: Context) -> list[Workflow]:
+async def list_workflows(session: CurrentSession, context: Context) -> list[Workflow]:
     found = [await context.repo.workflow(i) for i in await context.repo.workflow_ids()]
     return sorted(
-        (workflow for workflow in found if workflow),
+        (workflow for workflow in found if workflow and workflow.owner_id == session.user.id),
         key=lambda workflow: workflow.created_at,
         reverse=True,
     )
@@ -152,9 +154,15 @@ async def create_workflow(
     context: Context,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
+    if not _owns_seed(context, session):
+        raise ApiError(404, "NOT_FOUND", "no application")
+
     async def execute() -> WorkflowDetail:
         created = await context.workflows.create(
-            source_env=body.source_env, target_env=body.target_env, actor=session.user.login
+            source_env=body.source_env,
+            target_env=body.target_env,
+            actor=session.user.login,
+            owner_id=session.user.id,
         )
         return await _detail(context, created)
 
@@ -170,19 +178,21 @@ async def create_workflow(
 
 
 @router.get("/v1/workflows/{workflow_id}", response_model_by_alias=True)
-async def get_workflow(workflow_id: str, _: CurrentSession, context: Context) -> WorkflowDetail:
-    return await _detail(context, await _workflow(context, workflow_id))
+async def get_workflow(
+    workflow_id: str, session: CurrentSession, context: Context
+) -> WorkflowDetail:
+    return await _detail(context, await _workflow(context, workflow_id, session))
 
 
 @router.get("/v1/workflows/{workflow_id}/events", response_model_by_alias=True)
 async def workflow_events(
     workflow_id: str,
-    _: CurrentSession,
+    session: CurrentSession,
     context: Context,
     after: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> EventPage:
-    await _workflow(context, workflow_id)
+    await _workflow(context, workflow_id, session)
     events, next_cursor = await context.repo.events(workflow_id, after=after, limit=limit)
     return EventPage(events=events, next_cursor=next_cursor)
 
@@ -195,6 +205,8 @@ async def workflow_command(
     context: Context,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
+    await _workflow(context, workflow_id, session)
+
     async def execute() -> WorkflowDetail:
         updated = await context.workflows.apply(
             workflow_id,
@@ -259,9 +271,14 @@ def _expire(response: Response, context: ApiContext, name: str) -> None:
     )
 
 
-async def _workflow(context: ApiContext, workflow_id: str) -> Workflow:
+def _owns_seed(context: ApiContext, session: Session) -> bool:
+    owner = "local:developer" if context.settings.auth_disabled else context.settings.seed_owner_id
+    return bool(owner) and owner == session.user.id
+
+
+async def _workflow(context: ApiContext, workflow_id: str, session: Session) -> Workflow:
     workflow = await context.repo.workflow(workflow_id)
-    if workflow is None:
+    if workflow is None or workflow.owner_id != session.user.id:
         raise ApiError(404, "NOT_FOUND", f"no workflow {workflow_id}")
     return workflow
 

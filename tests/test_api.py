@@ -528,3 +528,37 @@ async def test_api_documents_are_not_public_in_production(world: World) -> None:
 async def test_login_off_must_stay_on_this_machine() -> None:
     with pytest.raises(ValueError, match=r"127\.0\.0\.1"):
         Settings(environment="local", auth_disabled=True, host="0.0.0.0", _env_file=None)  # type: ignore[call-arg]
+
+
+async def test_personal_workspace_hides_other_users_app_and_workflow(console: Console) -> None:
+    from datetime import timedelta
+
+    from control_plane.api.dependencies import current_session
+    from control_plane.domain.models import Session, User
+
+    await console.login()
+    created = await console.create()
+    workflow = created["workflow"]
+
+    async def stranger() -> Session:
+        now = console.world.clock.now()
+        return Session(
+            user=User(id="github:999", github_id=999, login="other"),
+            csrf_token=console.csrf,
+            created_at=now,
+            expires_at=now + timedelta(hours=1),
+        )
+
+    console.app.dependency_overrides[current_session] = stranger
+    assert (await console.http.get("/v1/applications")).json() == []
+    assert (await console.http.get("/v1/workflows")).json() == []
+    for suffix in ("", "/events"):
+        assert (
+            await console.http.get(f"/v1/workflows/{workflow['id']}{suffix}")
+        ).status_code == 404
+    response = await console.http.post(
+        f"/v1/workflows/{workflow['id']}/commands",
+        json={"command": "APPROVE", "expectedVersion": workflow["version"]},
+        headers=console.change_headers(),
+    )
+    assert response.status_code == 404

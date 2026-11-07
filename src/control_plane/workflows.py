@@ -54,7 +54,9 @@ class WorkflowService:
         self.clock = clock
         self.adapters = adapters
 
-    async def create(self, *, source_env: str, target_env: str, actor: str) -> Workflow:
+    async def create(
+        self, *, source_env: str, target_env: str, actor: str, owner_id: str = ""
+    ) -> Workflow:
         for env in (source_env, target_env):
             if env not in self.seed.environments:
                 raise ApiError(422, "UNKNOWN_ENVIRONMENT", f"{env} is not in the seed")
@@ -67,6 +69,7 @@ class WorkflowService:
             source_env=source_env,
             target_env=target_env,
             created_by=actor,
+            owner_id=owner_id,
             created_at=self.clock.now(),
         )
         try:

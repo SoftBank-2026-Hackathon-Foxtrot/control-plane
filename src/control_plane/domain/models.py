@@ -70,6 +70,7 @@ class RollbackRequest(Model):
 
 class Workflow(Model):
     id: str
+    owner_id: str = ""
     application: str
     source_env: str
     target_env: str
