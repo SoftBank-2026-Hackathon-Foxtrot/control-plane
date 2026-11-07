@@ -325,3 +325,5 @@ Monitoring APIs: authenticated workflow-scoped `telemetry/series`, `traces`, `tr
 The workflow is for the server-configured demo application, not an arbitrary personal application. `/v1/workflows/{id}/monitoring-scope` exposes its workload scope, actors, migration IDs and an allowlist of planned resource endpoints (no secrets). Workflow IDs isolate observations; resource snapshots also validate the stored migration ID. See [system query boundaries](infrastructure/observability/SYSTEM_METRICS.md).
 
 `GET /v1/telemetry/workflows` is the live observability selector: it excludes planned/completed/aborted workflows and requires a currently fresh, available module observation at the current clock time. HALTED/WAITING_APPROVAL remain selectable while reporting. It does not truncate to the last two runs. `/v1/workflows` and explicit workflow detail links retain history.
+
+앱 컨테이너 수집 범위와 기존 공용 배포 연결은 [시스템 메트릭](docs/system-metrics.md)을 참고합니다.

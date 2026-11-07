@@ -254,6 +254,15 @@ class Timings(Model):
     """No direct connection may be reported for this long before the proxy entry counts."""
 
 
+class SystemDeployment(Model):
+    """Explicit read access to one shared app deployment; never a wildcard owner grant."""
+
+    environment_id: str = Field(pattern=r"^env-[a-f0-9]{12}$")
+    deployment_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    owner_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    environment: str = Field(min_length=1, max_length=64)
+
+
 class Seed(Model):
     application: str
     scope: str
@@ -264,6 +273,19 @@ class Seed(Model):
     canary_weights: list[int] = Field(default_factory=lambda: [5])
     traffic_weights: list[int] = Field(default_factory=lambda: [25, 50, 100])
     timings: Timings = Field(default_factory=Timings)
+    system_deployments: list[SystemDeployment] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def system_deployment_identity(self) -> Self:
+        ids = [row.environment_id for row in self.system_deployments]
+        identities = [
+            (row.owner_id, row.deployment_id, row.environment) for row in self.system_deployments
+        ]
+        if len(ids) != len(set(ids)) or len(identities) != len(set(identities)):
+            raise ValueError("systemDeployments must have unique IDs and identities")
+        if any(row.environment not in self.environments for row in self.system_deployments):
+            raise ValueError("systemDeployments environment must belong to this application")
+        return self
 
     @model_validator(mode="after")
     def environment_refs(self) -> Self:
