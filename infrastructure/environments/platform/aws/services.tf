@@ -344,7 +344,7 @@ module "control_plane" {
       }, var.onprem_planning ? {
       CONTROL_PLANE_ONPREM_PLANNING = "true"
       CONTROL_PLANE_ONPREM_ACTORS   = jsonencode(var.onprem_plan_actors)
-      }, var.observability == null ? {} : {
+      } : {}, var.observability == null ? {} : {
       CONTROL_PLANE_PROMETHEUS_URL = var.observability.prometheus_url
       CONTROL_PLANE_TEMPO_URL      = var.observability.tempo_url
     })
