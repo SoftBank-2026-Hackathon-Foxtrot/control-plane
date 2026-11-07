@@ -101,8 +101,7 @@ class Prepare:
         resource = await ctx.resource(kind)
         if resource.binding_ref:
             return Passed()
-        seed = ctx.seed.resources.database
-        assert seed is not None  # PREPARE only registers resources the seed manages
+        seed = ctx.seed.resource_seed(kind, ctx.workflow.source_env, ctx.workflow.target_env)
         catalog = seed.catalog
         assert catalog is not None
         assert seed.source_ref is not None and seed.target_ref is not None
@@ -169,9 +168,8 @@ class Prepare:
         if resource.migration_id:
             return Passed()
         profile = PROFILES[kind]
-        body = resource.plan or profile.plan_body(
-            ctx.workflow, ctx.seed.resources.of(kind), resource, ctx.seed.scope
-        )
+        seed = ctx.seed.resource_seed(kind, ctx.workflow.source_env, ctx.workflow.target_env)
+        body = resource.plan or profile.plan_body(ctx.workflow, seed, resource, ctx.seed.scope)
         try:
             view = await ctx.client(kind).create_migration(f"{ctx.workflow.id}:{kind.value}", body)
         except AdapterError as error:

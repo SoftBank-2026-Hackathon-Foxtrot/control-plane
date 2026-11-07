@@ -22,11 +22,23 @@ SELF_LOGICAL_PROFILE: Final = "postgres-logical-pgbouncer-v1"
 DMS_PROFILE: Final = "gcp-dms-postgres-pgbouncer-v1"
 
 
+ResourceKey = Literal["database", "redis", "object"]
+RESOURCE_KEYS: Final[dict[ResourceKind, ResourceKey]] = {
+    ResourceKind.DATABASE: "database",
+    ResourceKind.REDIS: "redis",
+    ResourceKind.OBJECT_STORAGE: "object",
+}
+
+
 class Environment(Model):
     app_url: str
     traffic_pool: str
     actors: dict[str, int] = Field(min_length=1)
     """Actor id, as registered with the DB adapter, to the number of processes it runs."""
+    resources: dict[ResourceKey, str] = Field(default_factory=dict)
+    """This environment's resource refs (adapter keys). A workflow takes its source refs from its
+    source environment and its target refs from its target environment, so either direction runs
+    from the same seed."""
 
 
 class Policy(Model):
@@ -79,9 +91,14 @@ class ResourceSeed(Model):
                 raise ValueError("source is required before configuring a target")
             if self.source_ref is not None or self.target_ref is not None:
                 raise ValueError("use endpoint objects or legacy refs, not both")
-        elif self.source_ref is None or self.target_ref is None:
-            raise ValueError("source and target endpoints are required (legacy refs are accepted)")
+        elif (self.source_ref is None) != (self.target_ref is None):
+            raise ValueError("sourceRef and targetRef go together")
+        # With neither, the refs come from environments.*.resources (checked by Seed).
         return self
+
+    @property
+    def refs_from_environments(self) -> bool:
+        return self.source is None and self.source_ref is None
 
 
 class DatabaseSeed(ResourceSeed):
@@ -247,6 +264,44 @@ class Seed(Model):
     canary_weights: list[int] = Field(default_factory=lambda: [5])
     traffic_weights: list[int] = Field(default_factory=lambda: [25, 50, 100])
     timings: Timings = Field(default_factory=Timings)
+
+    @model_validator(mode="after")
+    def environment_refs(self) -> Self:
+        for kind in self.resources.managed():
+            resource = self.resources.of(kind)
+            key = RESOURCE_KEYS[kind]
+            if resource.source is not None:
+                continue
+            missing = [name for name, env in self.environments.items() if key not in env.resources]
+            if resource.refs_from_environments and missing:
+                raise ValueError(
+                    f"{key} has no sourceRef/targetRef: environments {missing} need resources.{key}"
+                )
+            if kind is ResourceKind.DATABASE and resource.catalog is not None:
+                known = resource.catalog.databases
+                unknown = [
+                    env.resources[key]
+                    for env in self.environments.values()
+                    if key in env.resources and env.resources[key] not in known
+                ]
+                if unknown:
+                    raise ValueError(f"database refs {unknown} are not in catalog.databases")
+        return self
+
+    def resource_seed(self, kind: ResourceKind, source_env: str, target_env: str) -> ResourceSeed:
+        """The resource as a workflow from `source_env` to `target_env` uses it.
+
+        Refs listed by both environments win over the resource's own sourceRef/targetRef.
+        Endpoint-object input is returned as it is."""
+        resource = self.resources.of(kind)
+        if resource.source is not None:
+            return resource
+        key = RESOURCE_KEYS[kind]
+        source = self.environments[source_env].resources.get(key)
+        target = self.environments[target_env].resources.get(key)
+        if source is None or target is None:
+            return resource
+        return resource.model_copy(update={"source_ref": source, "target_ref": target})
 
     @model_validator(mode="after")
     def unique_actors(self) -> Self:
