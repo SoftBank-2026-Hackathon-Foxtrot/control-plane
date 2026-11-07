@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, SerializeAsAny
 
 from control_plane.domain.models import (
     ActorState,
@@ -111,6 +111,21 @@ class ResourceView(Model):
     observed_at: Any
 
 
+class ObservedResourceView(ResourceView):
+    """Additive console telemetry, also safe to merge with the observer's ResourceView."""
+
+    business_write_access: str | None = None
+    transition_id: str | None = None
+    active_operation_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    progress: dict[str, Any] | None = None
+    replication: dict[str, Any] | None = None
+    streams: list[dict[str, Any]] = Field(default_factory=list)
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    rollback: dict[str, Any] | None = None
+    observation: dict[str, Any] = Field(default_factory=dict)
+
+
 class ActorView(Model):
     active_web_sockets: int | None = None
     actor_id: str
@@ -144,7 +159,7 @@ class WorkflowDetail(Model):
     workflow: Workflow
     allowed_commands: list[str]
     stages: list[StageView]
-    resources: list[ResourceView]
+    resources: list[SerializeAsAny[ResourceView]]
     traffic: list[TrafficRecord]
     hold: HoldView
 

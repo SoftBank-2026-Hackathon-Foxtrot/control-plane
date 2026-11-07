@@ -10,6 +10,7 @@ Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)
 - 공통 API: [마이그레이션 공통 Design Doc](https://app.notion.com/p/40d8bee9ada4815e9e94ee454be82d4a). `tests/contract/common-api.json`은 `db-migration-adaptor@1eac972`의 계약 사본입니다.
 - 앱이 구현할 내용: [docs/app-integration.md](docs/app-integration.md)
 - DB 에이전트 연결: [docs/native-db-agent.md](docs/native-db-agent.md). 기본은 PostgreSQL 직접 논리 복제입니다. DMS 작업과 Promote를 사용하지 않습니다.
+- 콘솔의 Proxy·Worker 상태와 복제량: [모듈 관측값 전달](docs/module-observations.md).
 
 ## 구조
 
