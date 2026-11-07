@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field
 
@@ -81,6 +81,17 @@ class StageView(Model):
 
 
 class ResourceView(Model):
+    progress: dict[str, Any] | None = None
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    rollback: dict[str, Any] | None = None
+    business_write_access: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    replication: dict[str, Any] | None = None
+    routing: dict[str, Any] | None = None
+    observation: dict[str, Any] = Field(default_factory=dict)
+    transition_id: str | None = None
+    active_operation_id: str | None = None
+
     kind: ResourceKind
     migration_id: str | None
     lifecycle: str | None
@@ -93,6 +104,7 @@ class ResourceView(Model):
 
 
 class ActorView(Model):
+    active_web_sockets: int | None = None
     actor_id: str
     state: str
     in_flight: int
@@ -102,13 +114,22 @@ class ActorView(Model):
 
 
 class HoldView(Model):
-    desired: HoldDesired
+    is_live: bool = True
+    observed_at: Any = None
+    requested_at: Any = None
+    released_at: Any = None
+    desired: HoldDesired | Literal["UNKNOWN"]
     generation: int
     held_since: Any
     actors: list[ActorView]
 
 
 class WorkflowDetail(Model):
+    preparation: dict[str, Any] = Field(default_factory=dict)
+    public_probe: dict[str, Any] | None = None
+    business_probes: list[dict[str, Any]] = Field(default_factory=list)
+    commands: list[dict[str, Any]] = Field(default_factory=list)
+
     workflow: Workflow
     allowed_commands: list[str]
     stages: list[StageView]
@@ -123,6 +144,7 @@ class EventPage(Model):
 
 
 class Heartbeat(Model):
+    active_web_sockets: int | None = Field(default=None, ge=0)
     actor_id: str
     instance_id: str = Field(min_length=1, max_length=128)
     generation: int = Field(ge=0)
@@ -139,3 +161,8 @@ class DirectiveView(Model):
 
 def allowed_commands(workflow: Workflow) -> list[str]:
     return list(ALLOWED_COMMANDS[workflow.status])
+
+
+class PreparationReport(Model):
+    resource: Literal["INFRA", "COMPUTE"]
+    data: dict[str, Any]

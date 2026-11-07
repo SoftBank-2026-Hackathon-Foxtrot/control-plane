@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 import boto3
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
     traffic_token_secret: str = "env:TRAFFIC_SERVICE_TOKEN"
 
     workload_token_secret: str = "env:WORKLOAD_TOKEN"
+    observation_token_secret: str | None = None
+    public_probe_url: str | None = None
+    public_probe_served_by: dict[str, str] = {}
+    """X-Served-By values mapped to registered environment names; separate from login public_url."""
 
     public_url: str = "http://localhost:5173"
     allowed_origins: list[str] = ["http://localhost:5173"]
@@ -40,6 +45,16 @@ class Settings(BaseSettings):
     session_hours: int = 8
     auth_disabled: bool = False
     """Skips login for a local console. Refused outside `environment=local`."""
+
+    @field_validator("public_probe_url")
+    @classmethod
+    def valid_probe_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        url = urlsplit(value)
+        if url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password:
+            raise ValueError("public_probe_url must be HTTP(S) without embedded credentials")
+        return value
 
     @model_validator(mode="after")
     def safe(self) -> Self:

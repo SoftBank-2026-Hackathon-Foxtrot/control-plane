@@ -242,7 +242,11 @@ class CommandRunner:
     async def _observed(
         self, ctx: StageContext, command: Command, record: CommandRecord, operation: OperationView
     ) -> Outcome:
-        if record.operation_status != operation.status:
+        from control_plane.observation_projection import OPERATION, project
+
+        observation = project(operation.raw, OPERATION)
+        if record.operation_status != operation.status or record.observation != observation:
+            record.observation = observation
             record.operation_status = operation.status
             await self._save(ctx, record)
         match operation.status:

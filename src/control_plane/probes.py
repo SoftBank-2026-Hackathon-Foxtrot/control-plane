@@ -89,7 +89,7 @@ class HttpAppProber:
             return False, _elapsed_ms(started)
         if response.status_code == 401:
             self._sessions.pop(app_url, None)
-        return response.status_code < 500 and response.status_code != 401, _elapsed_ms(started)
+        return response.status_code == 200, _elapsed_ms(started)
 
     async def _light_session(self, app_url: str) -> str:
         if app_url not in self._sessions:

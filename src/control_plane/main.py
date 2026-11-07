@@ -24,7 +24,9 @@ from control_plane.domain.models import ResourceKind
 from control_plane.engine.context import Services
 from control_plane.engine.engine import Engine
 from control_plane.errors import ApiError
+from control_plane.observations import ObservationLoop
 from control_plane.probes import AppProber, HttpAppProber, ProbeLoop
+from control_plane.public_probe import PublicProbeLoop
 from control_plane.seed import Seed, load_seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import DynamoTable, MemoryTable, Table
@@ -42,6 +44,8 @@ class Platform:
     context: ApiContext
     engine: Engine
     probe_loop: ProbeLoop
+    observation_loop: ObservationLoop
+    public_probe_loop: PublicProbeLoop | None = None
     clients: list[httpx.AsyncClient] = field(default_factory=list)
 
 
@@ -57,6 +61,7 @@ def assemble(
     prober: AppProber,
     auth: AuthService,
     workload_token: str,
+    observation_token: str = "",
 ) -> Platform:
     coordinator = WorkloadCoordinator(repo, seed, clock)
     services = Services(
@@ -79,9 +84,11 @@ def assemble(
             workflows=WorkflowService(repo, seed, clock, adapters),
             coordinator=coordinator,
             workload_token=workload_token,
+            observation_token=observation_token,
         ),
         engine=Engine(services),
         probe_loop=ProbeLoop(repo, seed, prober, clock),
+        observation_loop=ObservationLoop(repo, adapters, clock, coordinator),
     )
 
 
@@ -151,6 +158,15 @@ def build_platform(settings: Settings) -> Platform:
         prober=HttpAppProber(client(), seed, clock),
         auth=auth,
         workload_token=secret(settings.workload_token_secret),
+        observation_token=secret(settings.observation_token_secret)
+        if settings.observation_token_secret
+        else "",
+    )
+    unknown = set(settings.public_probe_served_by.values()) - set(seed.environments)
+    if unknown:
+        raise ValueError("public probe mapping contains unregistered environments")
+    platform.public_probe_loop = PublicProbeLoop(
+        repo, client(), clock, settings.public_probe_url, settings.public_probe_served_by
     )
     platform.clients = clients
     return platform
@@ -171,10 +187,13 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
             [
                 asyncio.create_task(platform.engine.run()),
                 asyncio.create_task(platform.probe_loop.run()),
+                asyncio.create_task(platform.observation_loop.run()),
             ]
             if run_loops
             else []
         )
+        if run_loops and platform.public_probe_loop:
+            tasks.append(asyncio.create_task(platform.public_probe_loop.run()))
         try:
             yield
         finally:

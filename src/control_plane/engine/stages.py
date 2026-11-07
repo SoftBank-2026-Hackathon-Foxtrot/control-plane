@@ -12,11 +12,12 @@ from typing import Protocol
 
 from control_plane.adapters.client import AdapterError
 from control_plane.adapters.profiles import PROFILES
-from control_plane.domain.models import ResourceKind, StageKind, TrafficRecord
+from control_plane.domain.models import ResourceKind, StageKind
 from control_plane.domain.stages import ALLOWED_ROUTES_BEFORE, CUTOVER_RESOURCE
 from control_plane.engine.commands import Command, CommandRunner, expected_after
 from control_plane.engine.context import Outcome, Passed, StageContext, Stop, Wait
 from control_plane.engine.evidence import WorkloadNotHeld, business_probes
+from control_plane.engine.traffic_observation import set_traffic
 from control_plane.engine.transition import held_command, hold_workload, release_workload
 from control_plane.probes import p95
 from control_plane.traffic import TrafficError
@@ -328,33 +329,13 @@ class TrafficShift:
         return self.weights[index - 1] if index else self.previous
 
     async def _apply(self, ctx: StageContext, percent: int) -> Outcome:
-        operation_id = f"{ctx.stage.kind.value}-{percent}-{ctx.workflow.retry_epoch}"
-        record = TrafficRecord(
-            operation_id=operation_id, requested=self._split(ctx, percent), at=ctx.now
-        )
-        # The intent is on record before the call, so the console never hides a change in flight.
-        await ctx.services.repo.save_traffic(ctx.workflow.id, record)
         try:
-            applied = await ctx.services.traffic.set_split(
-                source_pool=ctx.source_env.traffic_pool,
-                target_pool=ctx.target_env.traffic_pool,
-                target_percent=percent,
-            )
+            applied = await set_traffic(ctx, percent, "SHIFT")
         except TrafficError as error:
             if ctx.elapsed("apply") > ctx.seed.timings.command_timeout:
                 return Stop("TRAFFIC_CHANGE_FAILED", str(error), [f"requested {percent}%"])
             return Wait(f"retrying weight change: {error}")
         ctx.reset_timer("apply")
-        await ctx.services.repo.save_traffic(
-            ctx.workflow.id,
-            record.model_copy(
-                update={
-                    "applied": applied.weights,
-                    "effective_percent": applied.effective_percent,
-                    "verified": True,
-                }
-            ),
-        )
         await ctx.emit(
             "TRAFFIC_CHANGED",
             f"target {percent}%",
@@ -403,11 +384,7 @@ class TrafficShift:
         before = self._before(index)
         ctx.stage.data.pop("window_start", None)
         try:
-            await ctx.services.traffic.set_split(
-                source_pool=ctx.source_env.traffic_pool,
-                target_pool=ctx.target_env.traffic_pool,
-                target_percent=before,
-            )
+            await set_traffic(ctx, before, "COMPENSATE")
         except TrafficError as error:
             return Stop(
                 "TRAFFIC_REVERT_FAILED",

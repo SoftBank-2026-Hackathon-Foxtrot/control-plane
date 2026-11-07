@@ -285,3 +285,7 @@ python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health',
   - 승인을 Redis 앞으로 옮긴 이유: 두 전환 사이에 승인을 기다리면, 그동안 DB와 Redis가 서로 다른 클라우드에 있는 구간이 길어집니다.
   - 근거 정리: [동기화 시 병렬 vs 직렬](https://app.notion.com/p/40f8bee9ada48011a87cf7d442ca2ebb)
 - **트래픽은 팀 트래픽 서비스로:** 설계는 플랫폼 내부 모듈이 Cloudflare를 직접 호출하는 안이었습니다. 트래픽 팀이 별도 서비스(`POST /v1/traffic/actions`)를 만들었고, LB를 바꾸는 주체는 하나여야 하므로 그 서비스를 부르도록 바꿨습니다. `TrafficController` 인터페이스는 그대로라 엔진은 바뀌지 않았습니다.
+
+## 마이그레이션 관측
+
+모듈별 상태 수집, 준비 결과 연결, 공용 probe, 화면 계약과 배포 설정은 [관측 연결](docs/migration-observability.md)을 참고하세요.

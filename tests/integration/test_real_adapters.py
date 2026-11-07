@@ -148,6 +148,9 @@ async def drive(
 @pytest.fixture
 async def object_world(object_server: str) -> AsyncIterator[tuple[World, RealObjectApps]]:
     world = World()
+    # drive() advances fake time 20x faster than the real adapter. Leave enough fake
+    # seconds for its real 30-second stability window; production limits are unchanged.
+    world.seed.timings.advance_timeout = 1200
     http = httpx.AsyncClient(base_url=object_server, timeout=10)
     world.services.adapters[ResourceKind.OBJECT_STORAGE] = AdapterClient(http, TOKEN)
     apps = RealObjectApps(object_server, world.seed.resources.object.expected_apps or 0)

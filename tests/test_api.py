@@ -528,3 +528,48 @@ async def test_api_documents_are_not_public_in_production(world: World) -> None:
 async def test_login_off_must_stay_on_this_machine() -> None:
     with pytest.raises(ValueError, match=r"127\.0\.0\.1"):
         Settings(environment="local", auth_disabled=True, host="0.0.0.0", _env_file=None)  # type: ignore[call-arg]
+
+
+async def test_preparation_reports_need_a_separate_token_and_preserve_original_time(
+    console: Console, world: World
+) -> None:
+    await console.login()
+    workflow_id = (await console.create())["workflow"]["id"]
+    url = f"/internal/workflows/{workflow_id}/preparation"
+    object.__setattr__(world.platform.context, "observation_token", "report-token")
+    body = {
+        "resource": "INFRA",
+        "data": {
+            "workflowId": workflow_id,
+            "stage": "PLAN",
+            "status": "SUCCEEDED",
+            "observedAt": world.clock.now().isoformat(),
+            "changes": {"create": 1},
+            "secrets": {"token": "secret"},
+        },
+    }
+    assert (await console.http.post(url, json=body)).status_code == 401
+    assert (
+        await console.http.post(url, json=body, headers={"Authorization": "Bearer workload-token"})
+    ).status_code == 401
+    response = await console.http.post(
+        url, json=body, headers={"Authorization": "Bearer report-token"}
+    )
+    assert response.status_code == 200
+    detail = (await console.http.get(f"/v1/workflows/{workflow_id}")).json()
+    assert "secret" not in str(detail["preparation"])
+    assert detail["preparation"]["INFRA"]["data"]["observedAt"] == body["data"]["observedAt"]
+    world.clock.advance(20)
+    detail = (await console.http.get(f"/v1/workflows/{workflow_id}")).json()
+    assert detail["preparation"]["INFRA"]["observation"]["freshness"] == "STALE"
+    response = await console.http.get(f"/v1/workflows/{workflow_id}/observations?limit=1")
+    assert response.status_code == 200
+    assert len(response.json()["observations"]) == 1
+    assert (
+        await console.http.get(f"/v1/workflows/{workflow_id}/observations?limit=501")
+    ).status_code == 422
+    assert (
+        await console.http.get(
+            f"/v1/workflows/{workflow_id}/observations?since=2020-01-01T00:00:00Z"
+        )
+    ).status_code == 422

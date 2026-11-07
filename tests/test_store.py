@@ -142,3 +142,17 @@ async def test_an_oauth_request_can_be_consumed_once(table: Table) -> None:
     assert await repo.consume_oauth_request("state") == request
     assert await repo.consume_oauth_request("state") is None
     assert await repo.consume_oauth_request("missing") is None
+
+
+async def test_bounded_observation_query_and_ttl(table: Table) -> None:
+    for index in range(4):
+        await table.put("w", f"OBS#{index}", "{}", expected_version=0, expires_at=2000000000)
+    await table.put("w", "RESOURCE#db", "{}", expected_version=0)
+    page = await table.query("w", "OBS#", start="OBS#1", end="OBS#2", limit=1)
+    assert [item.sk for item in page.items] == ["OBS#1"]
+    assert page.next_sk == "OBS#1"
+    page = await table.query("w", "OBS#", start="OBS#1", end="OBS#2", after=page.next_sk)
+    assert [item.sk for item in page.items] == ["OBS#2"]
+    if isinstance(table, DynamoTable):
+        raw = table.client.get_item(TableName=table.name, Key=table._key("w", "OBS#1"))["Item"]
+        assert raw["expiresAt"] == {"N": "2000000000"}

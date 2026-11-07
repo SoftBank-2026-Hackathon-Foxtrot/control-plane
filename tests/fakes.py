@@ -720,7 +720,13 @@ class FakeTraffic:
         self.fail = False
 
     async def set_split(
-        self, *, source_pool: str, target_pool: str, target_percent: int
+        self,
+        *,
+        source_pool: str,
+        target_pool: str,
+        target_percent: int,
+        migration_id: str | None = None,
+        transition_id: str | None = None,
     ) -> AppliedWeights:
         if self.fail:
             raise TrafficError("cloudflare is down")

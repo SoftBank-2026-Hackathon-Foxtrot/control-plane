@@ -19,18 +19,32 @@ import httpx
 class TrafficError(Exception):
     """The weight change failed or could not be confirmed."""
 
+    def __init__(self, message: str, operation: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.operation = operation or {}
+
 
 @dataclass(frozen=True)
 class AppliedWeights:
     weights: dict[str, float]
     """What was requested, in percent per environment."""
     effective_percent: dict[str, float]
+    operation_id: str | None = None
+    operation_status: str = "NO_CHANGE"
+    started_at: str | None = None
+    finished_at: str | None = None
     """What the load balancer reported back after the change."""
 
 
 class TrafficController(Protocol):
     async def set_split(
-        self, *, source_pool: str, target_pool: str, target_percent: int
+        self,
+        *,
+        source_pool: str,
+        target_pool: str,
+        target_percent: int,
+        migration_id: str | None = None,
+        transition_id: str | None = None,
     ) -> AppliedWeights: ...
 
 
@@ -54,7 +68,13 @@ class TrafficService:
         self.sleep = sleep
 
     async def set_split(
-        self, *, source_pool: str, target_pool: str, target_percent: int
+        self,
+        *,
+        source_pool: str,
+        target_pool: str,
+        target_percent: int,
+        migration_id: str | None = None,
+        transition_id: str | None = None,
     ) -> AppliedWeights:
         if not 0 <= target_percent <= 100:
             raise ValueError("target_percent is a percentage")
@@ -79,20 +99,34 @@ class TrafficService:
             return AppliedWeights(weights=weights, effective_percent=_rounded(current))
 
         revision = int(status["revision"])
+        correlation = f"{migration_id}-{transition_id}-" if migration_id else ""
         accepted, headers = await self._call(
             "POST",
             "/v1/traffic/actions",
-            json={"action": "SET_WEIGHTS", "expectedRevision": revision, "weights": weights},
+            json={
+                "action": "SET_WEIGHTS",
+                "expectedRevision": revision,
+                "weights": weights,
+                **({"migrationId": migration_id} if migration_id else {}),
+                **({"transitionId": transition_id} if transition_id else {}),
+            },
             # The same change at the same revision is the same request, so a retry after a lost
             # answer finds the first operation instead of starting another.
-            key=f"control-plane-{target_pool}-{target_percent}-r{revision}",
+            key=f"control-plane-{correlation}{target_pool}-{target_percent}-r{revision}",
         )
         operation = await self._wait(headers.get("location") or accepted["statusUrl"])
         result = operation.get("result") or {}
         reported = {name: float(value) for name, value in (result.get("weights") or {}).items()}
         if not _same(reported, weights):
-            raise TrafficError(f"weights read back as {reported}, expected {weights}")
-        return AppliedWeights(weights=weights, effective_percent=_rounded(reported))
+            raise TrafficError(f"weights read back as {reported}, expected {weights}", operation)
+        return AppliedWeights(
+            weights=weights,
+            effective_percent=_rounded(reported),
+            operation_id=operation.get("operationId"),
+            operation_status=operation["status"],
+            started_at=operation.get("startedAt"),
+            finished_at=operation.get("finishedAt"),
+        )
 
     async def _wait(self, url: str) -> dict[str, Any]:
         waited = 0.0
@@ -105,10 +139,11 @@ class TrafficService:
                 # FAILED changed nothing. UNKNOWN may have, and blocks every change until a person
                 # reconciles it, so neither is retried here.
                 raise TrafficError(
-                    f"{state} {operation.get('operationId')}: {operation.get('error') or ''}"
+                    f"{state} {operation.get('operationId')}: {operation.get('error') or ''}",
+                    operation,
                 )
             if waited >= self.poll_timeout:
-                raise TrafficError(f"{operation.get('operationId')} still {state}")
+                raise TrafficError(f"{operation.get('operationId')} still {state}", operation)
             delay = float(headers.get("retry-after") or 1)
             await self.sleep(delay)
             waited += delay

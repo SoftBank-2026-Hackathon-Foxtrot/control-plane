@@ -16,6 +16,7 @@ from control_plane.engine.evidence import (
     target_probe_failing,
 )
 from control_plane.engine.stages import CUTOVER_ORDER
+from control_plane.engine.traffic_observation import set_traffic
 from control_plane.engine.transition import held_command, hold_workload, release_workload
 from control_plane.traffic import TrafficError
 
@@ -219,11 +220,7 @@ class Abort:
                 await ctx.emit("TRAFFIC_LEFT_IN_PLACE", f"{kind.value} is not on its source")
                 return Passed()
         try:
-            await ctx.services.traffic.set_split(
-                source_pool=ctx.source_env.traffic_pool,
-                target_pool=ctx.target_env.traffic_pool,
-                target_percent=0,
-            )
+            await set_traffic(ctx, 0, "ABORT")
         except TrafficError as error:
             return Stop("TRAFFIC_REVERT_FAILED", str(error))
         await ctx.emit("TRAFFIC_CHANGED", "target 0%: workflow aborted")
