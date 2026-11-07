@@ -10,6 +10,7 @@ from control_plane.deployment.provisioner.onprem import OnPremService
 from control_plane.deployment.provisioner.onprem_store import OnPremStore
 from control_plane.deployment.provisioner.service import Service
 from control_plane.deployment.provisioner.store import Store
+from control_plane.seed import Environment
 from tests.conftest import SETTINGS
 from tests.deployment.test_node import executor
 from tests.deployment.test_node import node_config as node_config  # pytest fixture
@@ -123,6 +124,66 @@ async def test_session_preparation_deployment_and_retained_data_lifecycle(regist
         headers=console.change_headers(),
     )
     assert cleanup.status_code == 202, cleanup.text
+
+
+async def test_deploy_for_requested_migration_after_preparing_the_node(registered_pc):
+    console, engine, _, _ = registered_pc
+    console.world.seed.environments["onprem"] = Environment(
+        app_url="http://onprem-app:80", traffic_pool="onprem", actors={"onprem-api": 1}
+    )
+    prepared = await console.http.post(
+        "/v1/applications/goods/onprem-preparations",
+        json={"nodeId": "pc", "mode": "apply"},
+        headers=console.change_headers(),
+    )
+    assert prepared.status_code == 202, prepared.text
+    engine.run_next()
+    prep_id = prepared.json()["environmentId"]
+    assert engine.onprem.get(prep_id)["status"] == "INFRA_READY"
+
+    requested = await console.http.post(
+        "/v1/workflows",
+        json={"sourceEnv": "aws", "targetEnv": "onprem"},
+        headers=console.change_headers(),
+    )
+    assert requested.status_code == 201, requested.text
+    workflow = requested.json()["workflow"]
+    assert workflow["status"] == "PLANNED"
+    assert workflow["createdBy"] == "hyunsu"
+    body = {
+        "cloud": "onprem",
+        "workflowId": workflow["id"],
+        "target": {"nodeId": "pc", "preparationId": prep_id},
+        "mode": "apply",
+    }
+    headers = console.change_headers()
+    path = "/v1/applications/goods/deployments"
+    deployed = await console.http.post(path, json=body, headers=headers)
+    assert deployed.status_code == 202, deployed.text
+    assert (await console.http.post(path, json=body, headers=headers)).json() == deployed.json()
+    engine.run_next()
+    engine.run_next()
+    app_path = "/v1/provisioning/environments/" + deployed.json()["environmentId"]
+    app = (await console.http.get(app_path)).json()
+    assert (app["workflowId"], app["status"]) == (workflow["id"], "READY")
+    assert app["handoff"]["preparationEnvironmentId"] == prep_id
+    removal = await console.http.post(app_path + "/destroy", headers=console.change_headers())
+    assert (removal.status_code, removal.json()["code"]) == (409, "WORKFLOW_BOUND")
+
+
+@pytest.mark.parametrize("owner_id", ["github:7", None])
+async def test_matching_login_alone_cannot_claim_a_workflow(registered_pc, owner_id):
+    console, engine, _, _ = registered_pc
+    workflow = await console.world.platform.context.workflows.create(
+        source_env="aws", target_env="gcp", actor="hyunsu", actor_id=owner_id
+    )
+    denied = await console.http.post(
+        "/v1/applications/goods/deployments",
+        json={"cloud": "onprem", "workflowId": workflow.id, "target": {"nodeId": "pc"}},
+        headers=console.change_headers(),
+    )
+    assert denied.status_code == 404
+    assert engine.store.environments() == []
 
 
 async def test_targets_and_preparations_enforce_ownership_csrf_and_reference_integrity(

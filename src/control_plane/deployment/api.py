@@ -81,7 +81,7 @@ async def deploy(
         workflow = await context.repo.workflow(workflow_id)
         if (
             workflow is None
-            or workflow.created_by != str(session.user.id)
+            or (workflow.created_by_id or workflow.created_by) != session.user.id
             or workflow.application != application_id
         ):
             raise ApiError(404, "NOT_FOUND", "workflow not found")

@@ -117,6 +117,7 @@ class Workflow(Model):
     """Moves each time a person asks to go on, roll back or abort. Failures of an earlier epoch
     have been reviewed and may be retried, and time spent waiting for that person does not count."""
     created_by: str
+    created_by_id: str | None = None
     created_at: datetime
     finished_at: datetime | None = None
     halt: Halt | None = None

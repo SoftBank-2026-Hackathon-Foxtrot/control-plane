@@ -182,6 +182,13 @@ task definition·Secrets Manager 설정을 자동으로 추가하지 않는다.
 
 ## 4. 준비 후 앱 배포
 
+데모에서는 아래 준비 요청을 미리 실행해 `INFRA_READY`의 환경 ID를 보관한다.
+시연 시 로그인한 사용자가 `POST /v1/workflows`로 등록된 AWS 원본과 온프렘 대상을
+선택하면 마이그레이션이 `PLANNED`로 생성된다. 앱을 띄울 때 아래 배포 요청에
+응답의 `workflow.id`를 `workflowId`로, 보관한 환경 ID를 `target.preparationId`로 넣는다.
+같은 요청을 재시도할 때는 같은 `Idempotency-Key`를 쓴다.
+앱 배포 결과는 `READY`로 확인하고, 데이터 이전 진행은 워크플로의 별도 승인 단계에서 제어한다.
+
 ```http
 POST /v1/applications/goods/onprem-preparations
 Idempotency-Key: goods-home-preparation-1
@@ -198,6 +205,7 @@ POST /v1/applications/goods/deployments
 Idempotency-Key: goods-home-app-1
 {
   "cloud":"onprem",
+  "workflowId":"wf-REPLACE_FROM_MIGRATION_REQUEST",
   "target":{"nodeId":"home-pc","preparationId":"env-REPLACE_FROM_PREPARATION"},
   "app":{"apiWorkers":4,"workerCount":2},
   "mode":"apply"
@@ -206,6 +214,8 @@ Idempotency-Key: goods-home-app-1
 
 앱 배포 상태는 `GET /v1/provisioning/environments/{environmentId}`에서 조회한다.
 이 앱 배포 ID와 데이터 서비스 준비 ID는 서로 다르다.
+독립적으로 앱만 배포할 때는 `workflowId`를 생략한다. 기존 워크플로에 로그인 이름만
+저장돼 있고 생성자 계정 ID를 확인할 수 없다면 그 요청을 앱 배포에 연결할 수 없다.
 `mode:"plan"`을 사용하면 계획 뒤 `POST .../apply`로 실행을 분리할 수 있다.
 데이터 준비의 apply는 `expectedRevision`과 응답의 `plan.planId`도 요구한다.
 
