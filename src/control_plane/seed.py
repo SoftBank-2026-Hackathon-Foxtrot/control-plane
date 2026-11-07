@@ -51,6 +51,9 @@ class ResourceSeed(Model):
     replication_ref: str | None = None
     expected_apps: int | None = Field(default=None, ge=1)
     catalog: DatabaseCatalog | None = None
+    direct_when_idle: bool = False
+    """Redis only: the application connects directly outside a migration and is moved onto the
+    proxy before PREPARE and off it after FINALIZE or an abort (Redis design 3-8)."""
 
 
 class DatabaseSeed(ResourceSeed):
@@ -88,6 +91,8 @@ class Resources(Model):
             raise ValueError("redis and object need bindingRef")
         if self.object.expected_apps is None:
             raise ValueError("object needs expectedApps: with none reporting, no guard applies")
+        if self.database.direct_when_idle or self.object.direct_when_idle:
+            raise ValueError("directWhenIdle applies to redis only")
         return self
 
     def of(self, kind: ResourceKind) -> ResourceSeed:
@@ -156,6 +161,10 @@ class Timings(Model):
     held_tick_interval: float = 0.1
     fast_poll_ms: int = 200
     idle_poll_ms: int = 5000
+    redis_route_timeout: float = 120
+    """How long every process may take to move its Redis connection."""
+    redis_route_stable_window: float = 10
+    """No direct connection may be reported for this long before the proxy entry counts."""
 
 
 class Seed(Model):

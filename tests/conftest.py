@@ -99,9 +99,12 @@ class World:
     """A whole platform with fakes at its edges, driven one second at a time."""
 
     def __init__(
-        self, table: Table | None = None, traffic: TrafficController | None = None
+        self,
+        table: Table | None = None,
+        traffic: TrafficController | None = None,
+        seed: dict[str, Any] | None = None,
     ) -> None:
-        self.seed = Seed.model_validate(SEED)
+        self.seed = Seed.model_validate(seed or SEED)
         self.clock = FakeClock()
         self.table = table or MemoryTable()
         self.gate = FakeDbGate(self.seed, self.clock)

@@ -15,6 +15,7 @@ from control_plane.engine.evidence import (
     business_probes,
     target_probe_failing,
 )
+from control_plane.engine.redisroute import leave_proxy
 from control_plane.engine.stages import CUTOVER_ORDER
 from control_plane.engine.transition import held_command, hold_workload, release_workload
 from control_plane.traffic import TrafficError
@@ -207,7 +208,16 @@ class Abort:
         coordinator = ctx.services.coordinator
         if (await coordinator.hold()).desired is HoldDesired.HOLD:
             await coordinator.release()
-        return await self._restore_traffic(ctx)
+        if not ctx.stage.data.get("abort_traffic_restored"):
+            restored = await self._restore_traffic(ctx)
+            if not isinstance(restored, Passed):
+                return restored
+            # Once: leaving the proxy may take a few ticks, and the weights must not be set again.
+            ctx.stage.data["abort_traffic_restored"] = True
+        # Off the proxy, to wherever Redis stayed. Its plan is settled, so it is on one side alone.
+        redis = await ctx.resource(ResourceKind.REDIS)
+        env = ctx.workflow.target_env if redis.last_route == "TARGET" else ctx.workflow.source_env
+        return await leave_proxy(ctx, env)
 
     async def _restore_traffic(self, ctx: StageContext) -> Outcome:
         """Users go back to the source if the data is still there. Otherwise weights stay."""

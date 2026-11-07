@@ -55,6 +55,50 @@ uvicorn Worker를 포함한 **모든 프로세스가 각자** 보고합니다. �
 
 응답의 `objectMigrationId`가 있으면 `OBJECT_MIGRATION_ID_FILE`에 기록합니다. `objroute.py`가 이 파일을 다시 읽어 경로 조회를 시작합니다. 앱에는 `OBJECT_MIGRATION_SERVER`와 `OBJECT_MIGRATION_ID_FILE`을 설정합니다.
 
+## Redis 경로
+
+시드의 `resources.redis.directWhenIdle`이 `true`이면, 앱은 평소에 Redis에 직접 연결하고 이전하는 동안만 Redis 프록시를 거칩니다(Redis 설계 3-8). 플랫폼은 PREPARE 전에 모든 프로세스를 프록시로 옮기고, FINALIZE나 ABORT 뒤에 Redis가 남은 쪽으로 직접 연결하게 합니다. 어느 쪽으로 옮기든 두 경로가 같은 Redis를 가리키므로 데이터는 바뀌지 않습니다.
+
+응답에 경로 지시가 함께 옵니다.
+
+```json
+{
+  "redisRoute": "PROXY",
+  "redisEndpoint": null,
+  "redisRouteGeneration": 3
+}
+```
+
+| 응답 필드 | 의미 |
+| --- | --- |
+| `redisRoute` | `DIRECT` 또는 `PROXY` |
+| `redisEndpoint` | `DIRECT`일 때 연결할 환경 이름(`aws`, `gcp`). `null`이면 앱의 기본값(`REDIS_URL`) |
+| `redisRouteGeneration` | 경로 지시의 번호. 지시가 바뀔 때마다 1씩 커집니다 |
+
+보고에 지금 쓰는 경로를 넣습니다. 이 기능을 쓰지 않는 프로세스는 넣지 않습니다.
+
+```json
+{
+  "redisRoute": "PROXY",
+  "redisRouteGeneration": 3,
+  "staleConnections": 0
+}
+```
+
+| 보고 필드 | 의미 |
+| --- | --- |
+| `redisRoute` | 지금 새 명령을 보내는 경로 |
+| `redisRouteGeneration` | 따른 경로 지시의 번호 |
+| `staleConnections` | 떠난 경로에 아직 열려 있는 연결 수. 옛 연결에서 진행 중인 명령, 아직 옮기지 않은 구독을 셉니다 |
+
+- **옮기는 방법:** 새 명령은 바로 새 경로의 연결 풀로 보내고, 옛 풀은 쓰는 중인 연결이 없어지면 닫습니다. Pub/Sub은 새 경로에 먼저 구독하고 확인을 받은 뒤 옛 구독을 해제합니다. 겹치는 동안 두 번 받은 메시지는 메시지 ID로 버립니다. 큐 소비자는 같은 consumer 이름으로 새 경로에서 다시 읽습니다.
+- **연결 이름:** 직접 연결에는 `CLIENT SETNAME direct:<actorId>`를 붙입니다. 프록시를 거치는 연결에는 붙이지 않습니다. 프록시가 이름을 자기 업스트림에 넘기기 때문입니다.
+- **확인:** 등록된 모든 프로세스가 같은 `redisRouteGeneration`을 보고하고 `staleConnections`가 0인 상태가 `redisRouteStableWindow`(기본 10초) 이어져야 진입으로 봅니다. 그 뒤 Redis 이전 서버의 PREPARE가 원본의 `CLIENT LIST`에서 직접 연결이 0개인지 한 번 더 확인합니다.
+- **시간 초과:** `redisRouteTimeout`(기본 120초) 안에 다 옮기지 않으면 `DIRECT`로 되돌리고 `REDIS_ENTRY_TIMEOUT`으로 멈춥니다.
+- **시작:** 첫 응답의 경로를 적용한 뒤에 업무를 받습니다. 이전 중에 뜬 프로세스도 처음부터 프록시로 붙습니다.
+
+앱 설정은 `REDIS_URL`(기본값, 평소의 직접 연결), `REDIS_PROXY_URL`(프록시와 그 프로세스의 프록시 계정), `REDIS_DIRECT_URLS`(`aws=redis://...,gcp=redis://...`)입니다. `REDIS_DIRECT_URLS`가 없으면 `REDIS_URL`만 씁니다.
+
 ## 업무 검사 지원
 
 플랫폼은 환경별로 다음을 호출합니다.

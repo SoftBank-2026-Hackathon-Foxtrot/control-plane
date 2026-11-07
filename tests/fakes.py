@@ -21,7 +21,13 @@ from jsonschema import Draft202012Validator
 from control_plane.adapters.client import AdapterClient
 from control_plane.clock import stamp
 from control_plane.dbgate import DbGateError
-from control_plane.domain.models import ActorState, BusinessProbe, HoldDesired, ResourceKind
+from control_plane.domain.models import (
+    ActorState,
+    BusinessProbe,
+    HoldDesired,
+    RedisRoute,
+    ResourceKind,
+)
 from control_plane.seed import Seed
 from control_plane.traffic import AppliedWeights, TrafficError
 from control_plane.workload.coordinator import WorkloadCoordinator
@@ -781,6 +787,14 @@ class SimulatedWorkload:
         self.in_flight = 0
         self.stuck: set[str] = set()
         self.silent = False
+        # Redis route each process follows (design 3-8), as the application's router does: the
+        # order of a heartbeat is applied by the next one.
+        self.route: dict[str, tuple[RedisRoute, str | None, int]] = {
+            instance: (RedisRoute.DIRECT, None, 0) for _, instance in self.processes
+        }
+        self.route_stuck: set[str] = set()
+        """Actors that keep a connection open on the route they leave."""
+        self.endpoint_used: dict[str, str | None] = {}
 
     async def beat(self) -> None:
         if self.silent:
@@ -792,12 +806,25 @@ class SimulatedWorkload:
                 state, in_flight = ActorState.HELD, 0
             else:
                 state, in_flight = ActorState.RUNNING, self.in_flight
+            route, _, route_generation = self.route[instance]
             directive = await self.coordinator.heartbeat(
                 actor_id=actor,
                 instance_id=instance,
                 generation=self.generation,
                 state=state,
                 in_flight=in_flight,
+                redis_route=route,
+                redis_route_generation=route_generation,
+                stale_connections=1 if actor in self.route_stuck and route_generation else 0,
             )
             self.desired = directive.desired
             self.generation = directive.generation
+            self.route[instance] = (
+                directive.redis_route,
+                directive.redis_endpoint,
+                directive.redis_route_generation,
+            )
+            self.endpoint_used[instance] = directive.redis_endpoint
+
+    def routes(self) -> set[RedisRoute]:
+        return {route for route, _, _ in self.route.values()}

@@ -45,6 +45,9 @@ resources:
     targetRef: resource:gcp
     bindingRef: binding:redis-proxy
     policy: {rollbackMode: REVERSE_REQUIRED, maxQuiesceSeconds: 1.8}
+    # true: the app connects to Redis directly and is moved onto the proxy only for a migration
+    # (docs/app-integration.md, "Redis 경로"). Needs the app's REDIS_DIRECT_URLS.
+    directWhenIdle: false
   object:
     sourceRef: resource:aws-receipts
     targetRef: resource:gcp-receipts

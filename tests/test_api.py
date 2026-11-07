@@ -454,6 +454,9 @@ async def test_heartbeat_needs_the_workload_token_and_known_names(console: Conso
         "generation": 0,
         "objectMigrationId": None,
         "pollAfterMs": 5000,
+        "redisRoute": "DIRECT",
+        "redisEndpoint": None,
+        "redisRouteGeneration": 0,
     }
     unknown = await console.http.post(
         url, json={**body, "actorId": "someone-else"}, headers=headers

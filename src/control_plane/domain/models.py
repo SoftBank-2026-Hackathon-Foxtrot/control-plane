@@ -178,6 +178,13 @@ class HoldDesired(StrEnum):
     HOLD = "HOLD"
 
 
+class RedisRoute(StrEnum):
+    """How the application reaches Redis: directly outside a migration, through the proxy in one."""
+
+    DIRECT = "DIRECT"
+    PROXY = "PROXY"
+
+
 class HoldState(Model):
     """What every process of a workload is told to do. Survives platform restarts."""
 
@@ -189,6 +196,11 @@ class HoldState(Model):
     held_since: datetime | None = None
     released_at: datetime | None = None
     object_migration_id: str | None = None
+    redis_route: RedisRoute = RedisRoute.DIRECT
+    redis_endpoint: str | None = None
+    """For DIRECT: the environment whose Redis to use. None leaves the application's own default."""
+    redis_route_generation: int = 0
+    """Moves with every route change, so a report can be matched to the order it follows."""
 
 
 class ActorState(StrEnum):
@@ -205,6 +217,11 @@ class ActorAck(Model):
     state: ActorState
     in_flight: int
     observed_at: datetime
+    redis_route: RedisRoute | None = None
+    """None: a process that does not switch its Redis connection."""
+    redis_route_generation: int = 0
+    stale_connections: int = 0
+    """Redis connections still open on the route it left."""
 
 
 class BusinessProbe(Model):
