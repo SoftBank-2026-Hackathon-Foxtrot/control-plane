@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -58,6 +58,7 @@ def assemble(
     prober: AppProber,
     auth: AuthService,
     workload_token: str,
+    adapter_factory: Callable[[Seed], dict[ResourceKind, AdapterClient]] | None = None,
 ) -> Platform:
     coordinator = WorkloadCoordinator(repo, seed, clock)
     services = Services(
@@ -69,6 +70,7 @@ def assemble(
         gate=gate,
         traffic=traffic,
         prober=prober,
+        adapter_factory=adapter_factory,
     )
     return Platform(
         context=ApiContext(
@@ -81,6 +83,7 @@ def assemble(
             coordinator=coordinator,
             workload_token=workload_token,
             prober=prober,
+            services=services,
         ),
         engine=Engine(services),
         probe_loop=ProbeLoop(repo, seed, prober, clock),
@@ -111,14 +114,22 @@ def build_platform(settings: Settings) -> Platform:
             endpoint=settings.dynamodb_endpoint,
         )
     )
-    adapters = {
-        kind: AdapterClient(
-            client(base_url=endpoint.url, verify=endpoint.verify),
-            secret(endpoint.token_secret),
-        )
-        for kind in ResourceKind
-        for endpoint in [seed.adapters.of(kind)]
-    }
+    adapter_cache: dict[str, dict[ResourceKind, AdapterClient]] = {}
+
+    def adapters_for_seed(selected: Seed) -> dict[ResourceKind, AdapterClient]:
+        key = selected.adapters.model_dump_json()
+        if key not in adapter_cache:
+            adapter_cache[key] = {
+                kind: AdapterClient(
+                    client(base_url=endpoint.url, verify=endpoint.verify),
+                    secret(endpoint.token_secret),
+                )
+                for kind in ResourceKind
+                for endpoint in [selected.adapters.of(kind)]
+            }
+        return adapter_cache[key]
+
+    adapters = adapters_for_seed(seed)
     gate: DbGate = UnavailableDbGate()
     if settings.db_gate_table:
         gate = SdkDbGate(
@@ -153,6 +164,7 @@ def build_platform(settings: Settings) -> Platform:
         prober=HttpAppProber(client(), seed, clock),
         auth=auth,
         workload_token=secret(settings.workload_token_secret),
+        adapter_factory=adapters_for_seed,
     )
     platform.clients = clients
     return platform

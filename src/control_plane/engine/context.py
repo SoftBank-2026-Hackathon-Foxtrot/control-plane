@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 
@@ -61,6 +62,19 @@ class Services:
     gate: DbGate
     traffic: TrafficController
     prober: Any
+    adapter_factory: Callable[[Seed], dict[ResourceKind, AdapterClient]] | None = None
+
+    def configured(self, seed: Seed) -> Services:
+        prober = self.prober
+        if hasattr(prober, "configured"):
+            prober = prober.configured(seed)
+        return replace(
+            self,
+            seed=seed,
+            adapters=self.adapter_factory(seed) if self.adapter_factory else self.adapters,
+            coordinator=WorkloadCoordinator(self.repo, seed, self.clock),
+            prober=prober,
+        )
 
 
 class StageContext:

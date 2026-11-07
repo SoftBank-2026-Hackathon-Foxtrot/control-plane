@@ -29,6 +29,7 @@ from control_plane.engine.context import Outcome, Passed, Services, StageContext
 from control_plane.engine.evidence import RunningEvidence
 from control_plane.engine.recovery import Abort, ManualReconcile, Rollback
 from control_plane.engine.stages import build_handlers
+from control_plane.seed import Seed
 from control_plane.store.table import VersionConflict
 
 log = logging.getLogger(__name__)
@@ -63,9 +64,16 @@ class Engine:
         a tick, the platform alone kept the application stopped for about 12 seconds. Ticking
         faster only while the hold is in force shortens that without changing what a tick does.
         """
-        timings = self.services.seed.timings
+        services = self.services
+        active = await services.repo.active_workflow_id()
+        workflow = await services.repo.workflow(active) if active else None
+        if workflow and workflow.application_snapshot:
+            services = services.configured(
+                Seed.model_validate(workflow.application_snapshot["configuration"])
+            )
+        timings = services.seed.timings
         try:
-            hold = await self.services.coordinator.hold()
+            hold = await services.coordinator.hold()
         except Exception:
             log.exception("could not read the hold")
             return timings.tick_interval
@@ -81,6 +89,16 @@ class Engine:
         workflow = await repo.workflow(workflow_id)
         if workflow is None:
             return
+        if workflow.application_snapshot:
+            configured = self.services.configured(
+                Seed.model_validate(workflow.application_snapshot["configuration"])
+            )
+            await Engine(configured, owner=self.owner)._tick_workflow(workflow)
+            return
+        await self._tick_workflow(workflow)
+
+    async def _tick_workflow(self, workflow: Workflow) -> None:
+        repo = self.services.repo
         await self.running_evidence.tick(workflow)
         if not self._needs_work(workflow):
             return

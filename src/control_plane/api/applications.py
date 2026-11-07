@@ -174,7 +174,7 @@ async def verify(
         return await verify_application(
             service(context),
             app,
-            context.workflows.adapters,
+            context.services.configured(app.configuration).adapters if app.configuration else {},
             context.prober,
             available,
         )

@@ -69,6 +69,9 @@ class HttpAppProber:
         self.clock = clock
         self._sessions: dict[str, str] = {}
 
+    def configured(self, seed: Seed) -> HttpAppProber:
+        return HttpAppProber(self.http, seed, self.clock)
+
     async def is_ready(self, app_url: str) -> bool:
         try:
             response = await self.http.get(f"{app_url}/readyz", timeout=5)
@@ -196,6 +199,7 @@ class ProbeLoop:
         self.prober = prober
         self.clock = clock
         self._buckets: dict[str, _Accumulator] = {}
+        self._workflow_id: str | None = None
 
     async def _active(self) -> tuple[str, StageKind] | None:
         workflow_id = await self.repo.active_workflow_id()
@@ -204,6 +208,13 @@ class ProbeLoop:
         workflow = await self.repo.workflow(workflow_id)
         if workflow is None or workflow.status not in PROBED_WHILE:
             return None
+        if self._workflow_id != workflow.id:
+            self._workflow_id = workflow.id
+            self._buckets.clear()
+            if workflow.application_snapshot:
+                self.seed = Seed.model_validate(workflow.application_snapshot["configuration"])
+                if isinstance(self.prober, HttpAppProber):
+                    self.prober = self.prober.configured(self.seed)
         return workflow.id, PLAN[workflow.current_stage].kind
 
     async def business_once(self) -> None:

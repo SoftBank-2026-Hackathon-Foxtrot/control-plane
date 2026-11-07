@@ -37,8 +37,11 @@ from control_plane.api.schemas import (
 )
 from control_plane.applications import ApplicationService
 from control_plane.domain.models import ResourceKind, ResourceState, Session, Workflow
+from control_plane.engine.context import Services
 from control_plane.errors import ApiError
-from control_plane.workflows import CommandInput
+from control_plane.seed import Seed
+from control_plane.workflows import CommandInput, WorkflowService
+from control_plane.workload.coordinator import WorkloadCoordinator
 
 router = APIRouter()
 LOGIN_COOKIE_SECONDS = 300
@@ -157,15 +160,29 @@ async def create_workflow(
     context: Context,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
-    if not _owns_seed(context, session):
+    if body.application_id is None and not _owns_seed(context, session):
         raise ApiError(404, "NOT_FOUND", "no application")
 
     async def execute() -> WorkflowDetail:
-        created = await context.workflows.create(
+        selected = context.workflows
+        snapshot = None
+        if body.application_id:
+            app = await ApplicationService(context.repo, context.clock).get(
+                session.user.id, body.application_id
+            )
+            if app.status != "VERIFIED" or app.configuration is None:
+                raise ApiError(409, "APP_NOT_VERIFIED", "verify the application first")
+            services = context.services.configured(app.configuration)
+            selected = WorkflowService(
+                context.repo, app.configuration, context.clock, services.adapters
+            )
+            snapshot = app.model_dump(mode="json", by_alias=True)
+        created = await selected.create(
             source_env=body.source_env,
             target_env=body.target_env,
             actor=session.user.login,
             owner_id=session.user.id,
+            application_snapshot=snapshot,
         )
         return await _detail(context, created)
 
@@ -208,10 +225,12 @@ async def workflow_command(
     context: Context,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
-    await _workflow(context, workflow_id, session)
+    workflow = await _workflow(context, workflow_id, session)
 
     async def execute() -> WorkflowDetail:
-        updated = await context.workflows.apply(
+        services = _services(context, workflow)
+        selected = WorkflowService(context.repo, services.seed, context.clock, services.adapters)
+        updated = await selected.apply(
             workflow_id,
             CommandInput(
                 command=body.command,
@@ -247,11 +266,20 @@ async def provisioning(_: CurrentSession, path: str) -> None:
     response_model_by_alias=True,
 )
 async def heartbeat(scope: str, body: Heartbeat, context: Context) -> DirectiveView:
-    if scope != context.seed.scope:
-        raise ApiError(404, "NOT_FOUND", f"no workload {scope}")
-    if body.actor_id not in context.seed.all_actors():
+    seed = context.seed
+    if scope != seed.scope:
+        item = await context.repo.table.get("APP_SCOPES", scope)
+        if item is None:
+            raise ApiError(404, "NOT_FOUND", f"no workload {scope}")
+        import json
+
+        ref = json.loads(item.body)
+        app = await ApplicationService(context.repo, context.clock).get(ref["owner"], ref["id"])
+        assert app.configuration is not None
+        seed = app.configuration
+    if body.actor_id not in seed.all_actors():
         raise ApiError(422, "UNKNOWN_ACTOR", f"{body.actor_id} is not registered")
-    directive = await context.coordinator.heartbeat(
+    directive = await WorkloadCoordinator(context.repo, seed, context.clock).heartbeat(
         actor_id=body.actor_id,
         instance_id=body.instance_id,
         generation=body.generation,
@@ -288,8 +316,9 @@ async def _workflow(context: ApiContext, workflow_id: str, session: Session) -> 
 
 async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
     repo = context.repo
-    hold, _ = await repo.hold(context.seed.scope)
-    actors = await context.coordinator.actor_statuses(hold.generation)
+    services = _services(context, workflow)
+    hold, _ = await repo.hold(services.seed.scope)
+    actors = await services.coordinator.actor_statuses(hold.generation)
     return WorkflowDetail(
         workflow=workflow,
         allowed_commands=allowed_commands(workflow),
@@ -328,3 +357,13 @@ def _resource(state: ResourceState) -> ResourceView:
         readiness=status.get("readiness"),
         observed_at=state.last_status_at,
     )
+
+
+def _services(context: ApiContext, workflow: Workflow) -> Services:
+    if workflow.application_snapshot:
+        return context.services.configured(
+            Seed.model_validate(
+                workflow.application_snapshot["configuration"],
+            )
+        )
+    return context.services

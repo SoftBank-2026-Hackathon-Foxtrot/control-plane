@@ -71,6 +71,7 @@ class RollbackRequest(Model):
 class Workflow(Model):
     id: str
     owner_id: str = ""
+    application_snapshot: dict[str, Any] | None = None
     application: str
     source_env: str
     target_env: str

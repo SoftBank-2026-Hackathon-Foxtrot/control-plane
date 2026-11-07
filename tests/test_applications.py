@@ -48,3 +48,39 @@ async def test_resource_catalog_is_server_owned_and_requires_ownership(world: Wo
     assert bound.configuration.application == app.id
     assert world.seed.application == "goods"
     assert bound.configuration.resources == world.seed.resources
+
+
+async def test_registered_snapshot_runs_on_existing_engine_after_restart(world: World) -> None:
+    from control_plane.applications import bind_configuration
+    from control_plane.domain.models import WorkflowStatus
+    from control_plane.verification import verify_application
+    from control_plane.workflows import WorkflowService
+
+    service = ApplicationService(world.repo, world.clock)
+    app = await service.create("alice", ApplicationInput(name="goods", image={"imageRef": IMAGE}))
+    app = await bind_configuration(service, "alice", app.id, app.version, world.seed)
+    report = await verify_application(service, app, world.services.adapters, world.prober, True)
+    assert report.passed
+    app = await service.get("alice", app.id)
+    assert app.configuration is not None
+    workflow = await WorkflowService(
+        world.repo,
+        app.configuration,
+        world.clock,
+        world.services.adapters,
+    ).create(
+        source_env="aws",
+        target_env="gcp",
+        actor="alice",
+        owner_id="alice",
+        application_snapshot=app.model_dump(mode="json", by_alias=True),
+    )
+    with pytest.raises(ApiError, match="active migration"):
+        await service.update(
+            "alice", app.id, ApplicationInput(name="changed", image=app.image), app.version
+        )
+    world.restart_engine_every_tick = True
+    finished = await world.run_to_end(workflow.id)
+    assert finished.status == WorkflowStatus.COMPLETED, finished.halt
+    assert finished.application_snapshot["image"]["imageRef"] == IMAGE
+    assert finished.owner_id == "alice"

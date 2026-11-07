@@ -55,7 +55,13 @@ class WorkflowService:
         self.adapters = adapters
 
     async def create(
-        self, *, source_env: str, target_env: str, actor: str, owner_id: str = ""
+        self,
+        *,
+        source_env: str,
+        target_env: str,
+        actor: str,
+        owner_id: str = "",
+        application_snapshot: dict[str, Any] | None = None,
     ) -> Workflow:
         for env in (source_env, target_env):
             if env not in self.seed.environments:
@@ -70,16 +76,19 @@ class WorkflowService:
             target_env=target_env,
             created_by=actor,
             owner_id=owner_id,
+            application_snapshot=application_snapshot,
             created_at=self.clock.now(),
         )
         try:
             await self.repo.create_workflow(workflow)
         except ActiveWorkflowExists as error:
+            active = await self.repo.workflow(error.workflow_id)
+            blockers = [error.workflow_id] if active and active.owner_id == owner_id else []
             raise ApiError(
                 409,
                 "WORKFLOW_ACTIVE",
                 "another migration has not finished",
-                [error.workflow_id],
+                blockers,
             ) from error
         for index, definition in enumerate(PLAN):
             await self.repo.save_stage(workflow.id, StageState(index=index, kind=definition.kind))

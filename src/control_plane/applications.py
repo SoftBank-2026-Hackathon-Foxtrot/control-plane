@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime
 from typing import Literal
@@ -166,6 +167,16 @@ async def bind_configuration(
     service.expect(app, version)
     # Adapter credentials and database catalogs come from server-owned configuration, never JSON.
     configuration = catalog.model_copy(update={"application": app.id}, deep=True)
+    scope_ref = json.dumps({"owner": owner, "id": app_id})
+    current = await service.repo.table.get("APP_SCOPES", catalog.scope)
+    if current and current.body != scope_ref:
+        raise ApiError(409, "SCOPE_IN_USE", "this workload scope is registered to another app")
+    if current is None:
+        try:
+            await service.repo.table.put("APP_SCOPES", catalog.scope, scope_ref, expected_version=0)
+        except VersionConflict as error:
+            raise ApiError(409, "SCOPE_IN_USE", "this workload scope was claimed") from error
+
     return await service.save(
         app.model_copy(
             update={

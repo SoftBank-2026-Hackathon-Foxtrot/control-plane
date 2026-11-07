@@ -21,6 +21,7 @@ from control_plane.workflows import ALLOWED_COMMANDS
 
 
 class CreateWorkflow(Model):
+    application_id: str | None = None
     source_env: str
     target_env: str
 

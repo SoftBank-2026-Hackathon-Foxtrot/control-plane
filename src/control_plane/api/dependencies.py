@@ -13,6 +13,7 @@ from control_plane.auth import LOCAL_USER, AuthService
 from control_plane.clock import Clock
 from control_plane.config import Settings
 from control_plane.domain.models import Session
+from control_plane.engine.context import Services
 from control_plane.errors import ApiError
 from control_plane.probes import AppProber
 from control_plane.seed import Seed
@@ -30,6 +31,7 @@ class ApiContext:
     auth: AuthService
     workflows: WorkflowService
     coordinator: WorkloadCoordinator
+    services: Services
     prober: AppProber
     workload_token: str
 
