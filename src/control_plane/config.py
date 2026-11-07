@@ -7,7 +7,7 @@ from typing import Literal, Self
 from urllib.parse import urlsplit
 
 import boto3
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,6 +35,18 @@ class Settings(BaseSettings):
     observation_token_secret: str | None = None
     prometheus_url: str | None = None
     tempo_url: str | None = None
+    ai_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("OPENAI_API_KEY", "CONTROL_PLANE_AI_API_KEY")
+    )
+    ai_api_key_secret: str | None = None
+    ai_model: str = "gpt-5-mini"
+    ai_timeout_seconds: float = Field(default=60, ge=1, le=120)
+    ai_max_output_tokens: int = Field(default=4000, ge=256, le=16000)
+    ai_retention_days: int = Field(default=30, ge=1, le=90)
+    ai_application_label: str = Field(default="application_id", pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+    ai_environment_label: str = Field(
+        default="deployment_environment_name", pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+    )
     public_probe_url: str | None = None
     public_probe_served_by: dict[str, str] = {}
     """X-Served-By values mapped to registered environment names; separate from login public_url."""

@@ -17,6 +17,12 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from control_plane.adapters.client import AdapterClient
+from control_plane.ai.api import router as ai_router
+from control_plane.ai.context import InfrastructureContext
+from control_plane.ai.model import OpenAIModel
+from control_plane.ai.service import AIService
+from control_plane.ai.store import AIStore
+from control_plane.ai.telemetry import TelemetryReader
 from control_plane.api.dependencies import ApiContext
 from control_plane.api.routes import router
 from control_plane.auth import AuthService
@@ -60,6 +66,7 @@ class Platform:
     public_probe_loop: PublicProbeLoop | None = None
     clients: list[httpx.AsyncClient] = field(default_factory=list)
     deployment_service: DeploymentService | None = None
+    ai_service: AIService | None = None
 
 
 def assemble(
@@ -250,6 +257,23 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     )
     app.state.context = platform.context
     app.state.deployment_service = platform.deployment_service
+    if platform.ai_service is None:
+        context = platform.context
+        settings = context.settings
+        key = settings.ai_api_key.get_secret_value() if settings.ai_api_key else None
+        if settings.ai_api_key_secret:
+            key = resolve_secret(settings.ai_api_key_secret, region=settings.region)
+        http = httpx.AsyncClient(timeout=3, follow_redirects=False)
+        platform.clients.append(http)
+        platform.ai_service = AIService(
+            InfrastructureContext(context, platform.deployment_service),
+            AIStore(context.repo.table, context.clock, settings.ai_retention_days),
+            OpenAIModel(
+                key, settings.ai_model, settings.ai_timeout_seconds, settings.ai_max_output_tokens
+            ),
+            TelemetryReader(settings, http),
+        )
+    app.state.ai_service = platform.ai_service
     from control_plane.deployment.api import router as deployment_router
 
     app.include_router(deployment_router)
@@ -259,6 +283,7 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     from control_plane.security_review.api import router as security_review_router
 
     app.include_router(security_review_router)
+    app.include_router(ai_router)
     app.add_middleware(TraceMiddleware, telemetry=get_telemetry("control-plane"))
 
     @app.exception_handler(ApiError)

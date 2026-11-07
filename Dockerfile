@@ -6,6 +6,7 @@ WORKDIR /srv
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY infrastructure ./infrastructure
+COPY config/seed.example.yaml ./config/seed.example.yaml
 RUN uv sync --locked --no-dev --no-editable
 
 # Optional, and private: without it the platform runs and a DB cutover stops with a clear reason.
