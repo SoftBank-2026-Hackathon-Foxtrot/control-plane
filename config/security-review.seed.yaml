@@ -1,0 +1,22 @@
+# Local preview only; unreachable adapter and no workflow workers.
+application: goods
+scope: scope:goods
+environments:
+  aws:
+    appUrl: http://127.0.0.1:1
+    trafficPool: aws
+    actors: {goods-aws-api: 1}
+  gcp:
+    appUrl: http://127.0.0.1:1
+    trafficPool: gcp
+    actors: {goods-gcp-api: 1}
+resources:
+  object:
+    sourceRef: resource:aws-demo
+    targetRef: resource:gcp-demo
+    bindingRef: binding:demo
+    expectedApps: 2
+    policy: {rollbackMode: REVERSE_REQUIRED, maxQuiesceSeconds: 30}
+adapters:
+  object: {url: "http://127.0.0.1:1", tokenSecret: "env:WORKLOAD_TOKEN"}
+probe: {groupbuyId: 1}

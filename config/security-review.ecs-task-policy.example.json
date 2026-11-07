@@ -1,0 +1,11 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadChiikawaBucketReferencePolicy",
+      "Effect": "Allow",
+      "Action": "iam:GetRolePolicy",
+      "Resource": "arn:aws:iam::952561150367:role/chiikawa-aws-3e3d-app"
+    }
+  ]
+}
