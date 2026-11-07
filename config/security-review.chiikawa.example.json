@@ -9,5 +9,6 @@
   "extraBucket": "foxtrot-security-demo-513413",
   "gcpPrincipal": "serviceAccount:chiikawa-gcp-1975-app@foxtrot-513413.iam.gserviceaccount.com",
   "gcpCredentialsRef": "env:SECURITY_GCP_CREDENTIALS",
-  "mode": "cloud"
+  "mode": "cloud",
+  "readOnly": true
 }

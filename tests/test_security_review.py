@@ -21,6 +21,7 @@ CONFIG = ReviewConfig(
     extra_bucket="goods-security-demo",
     gcp_principal="serviceAccount:goods@app-project.iam.gserviceaccount.com",
     mode="fixture",
+    read_only=False,
 )
 
 
@@ -301,3 +302,27 @@ def test_demo_setup_refuses_unsafe_existing_buckets(tmp_path, monkeypatch, unsaf
     )
     with pytest.raises(ValueError):
         prepare.main()
+
+
+async def test_read_only_review_collects_but_never_plans_or_applies(world: World) -> None:
+    config = CONFIG.model_copy(update={"read_only": True})
+    provider = FixtureProvider(config)
+    original = deepcopy(provider.data)
+    review = ReviewService(config, provider, world.table, world.clock, ready)
+    result = await run(review, "scan")
+    assert result["phase"] == "gap" and result["readOnly"] is True
+    assert len(result["checks"]) == 3
+    for action in ("plan", "apply"):
+        with pytest.raises(ApiError) as error:
+            await run(review, action)
+        assert error.value.code == "SECURITY_READ_ONLY"
+    assert provider.writes == 0 and provider.data == original
+    assert await world.table.get("WORKFLOWS", "ACTIVE") is None
+
+
+def test_cloud_provider_read_only_rejects_writes_before_network() -> None:
+    from control_plane.security_review.provider import CloudProvider
+
+    config = CONFIG.model_copy(update={"read_only": True})
+    with pytest.raises(ValueError, match="read-only"):
+        CloudProvider(config, "ap-northeast-2").apply({})
