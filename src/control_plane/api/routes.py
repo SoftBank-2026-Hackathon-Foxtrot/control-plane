@@ -5,6 +5,7 @@ The browser calls `/api/...`; the gateway, or Vite in development, removes the p
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
@@ -173,17 +174,43 @@ async def list_workflows(_: CurrentSession, context: Context) -> list[Workflow]:
 @router.post("/v1/workflows", status_code=201)
 async def create_workflow(
     body: CreateWorkflow,
+    request: Request,
     session: CheckedSession,
     context: Context,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
     async def execute() -> WorkflowDetail:
-        created = await context.workflows.create(
-            source_env=body.source_env,
-            target_env=body.target_env,
-            actor=session.user.login,
-            resources=body.resources,
-        )
+        # The provisioner has one process/store. This admission lock serializes its public
+        # updates with claiming the workflow's durable active slot.
+        async with context.mutation_lock:
+            engine = getattr(request.app.state, "deployment_service", None)
+            prepared = None
+            if body.target_configuration is not None:
+                from control_plane.deployment.migration_sizing import validate
+
+                if body.source_env == body.target_env:
+                    raise ApiError(422, "SAME_ENVIRONMENT", "source and target are the same")
+                prepared = await validate(
+                    context,
+                    engine,
+                    str(session.user.id),
+                    body.target_env,
+                    body.target_configuration,
+                    body.resources,
+                )
+            if engine is not None:
+                for env in await asyncio.to_thread(engine.store.environments):
+                    if await asyncio.to_thread(engine.store.busy, env["id"]):
+                        raise ApiError(
+                            409, "DEPLOYMENT_BUSY", "배포 작업이 끝난 뒤 마이그레이션을 시작하세요."
+                        )
+            created = await context.workflows.create(
+                source_env=body.source_env,
+                target_env=body.target_env,
+                actor=session.user.login,
+                resources=body.resources,
+                target_configuration=prepared,
+            )
         return await _detail(context, created)
 
     return await once(

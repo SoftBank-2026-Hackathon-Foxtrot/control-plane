@@ -7,7 +7,7 @@ import hashlib
 import re
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Query, Request, Response
 
 from control_plane.api.dependencies import CheckedSession, Context, CurrentSession, checked_change
 from control_plane.errors import ApiError
@@ -56,6 +56,31 @@ async def call(function: Any, *args: Any) -> Any:
         raise ApiError(409, error.code, str(error)) from error
     except NotFound as error:
         raise ApiError(404, "NOT_FOUND", "deployment not found") from error
+
+
+async def require_no_workflow(context: Any) -> None:
+    active = await context.repo.active_workflow_id()
+    if active:
+        raise ApiError(
+            409, "WORKFLOW_ACTIVE", "마이그레이션 중에는 배포 사양을 변경할 수 없습니다.", [active]
+        )
+
+
+@router.get("/v1/migration-sizing")
+async def migration_sizing(
+    request: Request,
+    context: Context,
+    session: CurrentSession,
+    target_env: str = Query(alias="targetEnv"),
+) -> dict[str, Any]:
+    from .migration_sizing import options
+
+    return await options(
+        context,
+        getattr(request.app.state, "deployment_service", None),
+        str(session.user.id),
+        target_env,
+    )
 
 
 @router.post("/v1/applications/{application_id}/deployments", status_code=202)
@@ -165,7 +190,10 @@ async def provisioning(
             fn = {"apply": engine.apply, "update": engine.update, "check-app": engine.check_app}[
                 action
             ]
-            code, result = await call(fn, *args)
+            async with context.mutation_lock:
+                if action in {"apply", "update"}:
+                    await require_no_workflow(context)
+                code, result = await call(fn, *args)
             response.status_code = code
             return result
     job = re.fullmatch(r"jobs/(job-[a-f0-9]{12})", path)

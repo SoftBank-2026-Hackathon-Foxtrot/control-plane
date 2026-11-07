@@ -37,6 +37,8 @@ class AppliedWeights:
 
 
 class TrafficController(Protocol):
+    async def require_source_only(self, *, source_pool: str, target_pool: str) -> None: ...
+
     async def set_split(
         self,
         *,
@@ -66,6 +68,25 @@ class TrafficService:
         self.headers = {"Authorization": f"Bearer {token}"}
         self.poll_timeout = poll_timeout
         self.sleep = sleep
+
+    async def require_source_only(self, *, source_pool: str, target_pool: str) -> None:
+        """A target taking public traffic must not be resized by PREPARE."""
+        status, _ = await self._call("GET", "/v1/traffic/status")
+        if status.get("unknownOperationIds"):
+            raise TrafficError("traffic has an unknown operation")
+        current = status.get("weights")
+        if not isinstance(current, dict) or not {source_pool, target_pool} <= current.keys():
+            raise TrafficError("the source and target traffic pools cannot be confirmed")
+        try:
+            source_only = all(
+                math.isfinite(float(value))
+                and abs(float(value) - (100 if pool == source_pool else 0)) < 0.000001
+                for pool, value in current.items()
+            )
+        except (TypeError, ValueError):
+            source_only = False
+        if not source_only:
+            raise TrafficError("the target may serve traffic; refusing its sizing change")
 
     async def set_split(
         self,

@@ -775,6 +775,10 @@ class FakeTraffic:
         self.history: list[int] = []
         self.fail = False
 
+    async def require_source_only(self, *, source_pool: str, target_pool: str) -> None:
+        if self.fail or self.current != 0:
+            raise TrafficError("source-only traffic is not confirmed")
+
     async def set_split(
         self,
         *,

@@ -15,6 +15,7 @@ from control_plane.domain.models import (
     RedisRoute,
     ResourceKind,
     StageState,
+    TargetConfiguration,
     TrafficRecord,
     User,
     Workflow,
@@ -27,6 +28,7 @@ class CreateWorkflow(Model):
     source_env: str
     target_env: str
     resources: dict[ResourceKind, EndpointPair] = Field(default_factory=dict)
+    target_configuration: TargetConfiguration | None = None
 
 
 class InitializeBindings(Model):

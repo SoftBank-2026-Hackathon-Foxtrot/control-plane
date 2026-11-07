@@ -8,7 +8,7 @@ import os
 import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 import httpx
@@ -257,6 +257,9 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     )
     app.state.context = platform.context
     app.state.deployment_service = platform.deployment_service
+    platform.engine.services = replace(
+        platform.engine.services, deployment=platform.deployment_service
+    )
     if platform.ai_service is None:
         context = platform.context
         settings = context.settings

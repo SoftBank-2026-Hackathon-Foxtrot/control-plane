@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = """
@@ -35,6 +37,19 @@ class Store:
                 self.db.execute("ALTER TABLE environments ADD COLUMN readiness TEXT")
                 # Old READY meant only apply completion. Never invent an app health result.
                 self.db.execute("UPDATE environments SET status='INFRA_READY' WHERE status='READY'")
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Publish an environment change, its job and retry record together."""
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+            else:
+                self.db.execute("COMMIT")
 
     def _env(self, row) -> dict | None:
         if row is None:

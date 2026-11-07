@@ -68,6 +68,12 @@ class Prepare:
         self.runner = runner
 
     async def advance(self, ctx: StageContext) -> Outcome:
+        if ctx.workflow.target_configuration is not None:
+            from control_plane.deployment.migration_sizing import prepare_target
+
+            configured = await prepare_target(ctx)
+            if not isinstance(configured, Passed):
+                return configured
         for env in (ctx.source_env, ctx.target_env):
             if not await ctx.services.prober.is_ready(env.app_url):
                 if ctx.elapsed("apps_ready") > ctx.seed.timings.command_timeout:

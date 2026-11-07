@@ -13,6 +13,7 @@ from control_plane.clock import Clock
 from control_plane.domain.models import (
     EndpointPair,
     Halt,
+    PreparedTargetConfiguration,
     ResourceKind,
     RollbackRequest,
     StageState,
@@ -64,6 +65,7 @@ class WorkflowService:
         target_env: str,
         actor: str,
         resources: dict[ResourceKind, EndpointPair] | None = None,
+        target_configuration: PreparedTargetConfiguration | None = None,
     ) -> Workflow:
         active = await self.repo.active_workflow_id()
         if active:
@@ -84,6 +86,7 @@ class WorkflowService:
             target_env=target_env,
             created_by=actor,
             created_at=self.clock.now(),
+            target_configuration=target_configuration,
         )
         plans = []
         for kind in (ResourceKind.DATABASE, ResourceKind.REDIS):

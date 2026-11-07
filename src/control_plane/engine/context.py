@@ -61,6 +61,7 @@ class Services:
     gate: DbGate
     traffic: TrafficController
     prober: Any
+    deployment: Any = None
 
 
 class StageContext:
