@@ -80,6 +80,7 @@ def assemble(
             workflows=WorkflowService(repo, seed, clock, adapters),
             coordinator=coordinator,
             workload_token=workload_token,
+            prober=prober,
         ),
         engine=Engine(services),
         probe_loop=ProbeLoop(repo, seed, prober, clock),

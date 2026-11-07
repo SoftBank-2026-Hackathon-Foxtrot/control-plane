@@ -140,3 +140,39 @@ class ApplicationService:
                 }
             )
         )
+
+
+class ConfigurationInput(Model):
+    expected_version: int = Field(ge=1)
+
+
+class Verification(Model):
+    application_id: str
+    version: int
+    passed: bool
+    checks: dict[str, bool]
+    blockers: list[str]
+
+
+async def bind_configuration(
+    service: ApplicationService,
+    owner: str,
+    app_id: str,
+    version: int,
+    catalog: Seed,
+) -> Application:
+    app = await service.get(owner, app_id)
+    await service.idle(app)
+    service.expect(app, version)
+    # Adapter credentials and database catalogs come from server-owned configuration, never JSON.
+    configuration = catalog.model_copy(update={"application": app.id}, deep=True)
+    return await service.save(
+        app.model_copy(
+            update={
+                "configuration": configuration,
+                "status": "REGISTERED",
+                "verified_at": None,
+                "updated_at": service.clock.now(),
+            }
+        )
+    )

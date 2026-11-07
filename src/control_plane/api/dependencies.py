@@ -14,6 +14,7 @@ from control_plane.clock import Clock
 from control_plane.config import Settings
 from control_plane.domain.models import Session
 from control_plane.errors import ApiError
+from control_plane.probes import AppProber
 from control_plane.seed import Seed
 from control_plane.store.repository import Repository
 from control_plane.workflows import WorkflowService
@@ -29,6 +30,7 @@ class ApiContext:
     auth: AuthService
     workflows: WorkflowService
     coordinator: WorkloadCoordinator
+    prober: AppProber
     workload_token: str
 
     @property
