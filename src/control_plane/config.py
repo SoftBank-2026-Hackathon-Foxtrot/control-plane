@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     workload_token_secret: str = "env:WORKLOAD_TOKEN"
     observation_token_secret: str | None = None
+    prometheus_url: str | None = None
+    tempo_url: str | None = None
     public_probe_url: str | None = None
     public_probe_served_by: dict[str, str] = {}
     """X-Served-By values mapped to registered environment names; separate from login public_url."""
@@ -46,7 +48,7 @@ class Settings(BaseSettings):
     auth_disabled: bool = False
     """Skips login for a local console. Refused outside `environment=local`."""
 
-    @field_validator("public_probe_url")
+    @field_validator("public_probe_url", "prometheus_url", "tempo_url")
     @classmethod
     def valid_probe_url(cls, value: str | None) -> str | None:
         if value is None:

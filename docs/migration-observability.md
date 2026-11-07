@@ -1,51 +1,59 @@
-# 마이그레이션 관측 연결
+# OTEL 마이그레이션 관측
 
-모듈의 기존 상태 API → 컨트롤 플레인 저장 → 플랫폼 상세 화면 순서입니다. 모듈은 서비스를 재배포하면 추가 필드를 제공합니다. 화면은 어댑터나 클라우드 API에 직접 연결하지 않습니다. CPU·메모리·전체 로그 시스템은 추가하지 않습니다.
+`모듈 SDK → OTEL Collector → CP / Prometheus / Tempo → CP API → 플랫폼`으로 통일합니다. 별도 관측용 adapter polling과 IaC preparation POST를 제거했습니다. 엔진이 명령 결과와 안전 근거를 확인하는 기존 제어 API 호출은 유지합니다.
 
-## 수집과 조회
+## 최소 수집 항목과 위치
 
-- `ObservationLoop`가 등록된 DB·Redis·객체 migration을 5초마다 조회합니다. 승인 대기·중단·복귀 중에도 동작하고, 종결 후 60초까지 계속합니다. 엔진과 동시에 같은 migration을 읽으면 HTTP 요청을 공유합니다. 제어 엔진의 tick 주기는 유지합니다.
-- 관측은 `OBS_LATEST#resource`와 시간순 `OBS#...`에 저장합니다. 엔진의 `RESOURCE#...`를 수정하지 않습니다. 원 측정 시각, 수집 시각, 마지막 성공, 마지막 진전을 구분합니다. 수집 실패 시 마지막 성공값을 유지하고 `UNAVAILABLE`로 표시합니다.
-- 최신성 기준은 15초입니다. 원 시각이 없거나 미래이면 `UNKNOWN`입니다. `checks[].decision`은 당시 결과이고 `currentResult`는 시각·전환·topology가 유효할 때만 해당 결과입니다. 화면용 계산이며 제어 판정을 바꾸지 않습니다.
-- `GET /v1/workflows/{id}`는 progress/checks/rollback/details, 준비 결과, 공용·업무 probe, 실제 명령 ID와 시간을 제공합니다. 기존 `verified`/`effectivePercent`는 **LB 설정 확인**입니다. 새 화면은 `configVerified`와 `publicProbe.observedPercent`를 구분합니다.
-- `GET /v1/workflows/{id}/observations?since=<ISO8601>&limit=200&cursor=...`는 로그인 인증을 사용합니다. 최대 500개, 최근 24시간 이내이며 다음 페이지는 `nextCursor`를 사용합니다. 시간 조건을 DynamoDB key query에 적용합니다.
-- 원시 표본의 `expiresAt`은 24시간, 종결 후 최신 관측/공용 요약은 7일입니다. 활성 workflow의 최신 관측과 제어 근거는 만료시키지 않습니다. DynamoDB TTL은 아래처럼 **운영 테이블에 별도로 활성화**해야 삭제됩니다. API는 이력의 24시간 범위를 제한합니다. 메모리 저장소는 개발용이며 재시작 시 사라집니다.
+| 발행 위치 | 필요한 정보 |
+|---|---|
+| DB API background observer / Worker | 복제 상태·lag·검증·rollback 근거, PgBouncer pause, writer/prepared 수, 작업 시작·종료 |
+| Redis API observer / CommonApi 실행 | 정·역방향 backlog/copied/dirty age, proxy in-flight/open transaction/pause/pubsub, 실제 명령 span |
+| Object Go observer / worker | 복사 수·bytes, 정·역복제, 마지막 sync/verification, 앱 generation/ack, 명령 span |
+| IaC Provisioner / COMPUTE adapter | plan/apply 변경 수·작업 상태·실제 시각, VM/이미지/설정/컨테이너·readiness |
+| Traffic 실행기 | 요청/적용 LB weight, 설정 검증, 작업 상태·시간 |
+| Demo 앱 / worker | 요청·업무 span, in-flight, WebSocket 잔존, Redis 경로의 잔존 연결 |
+| CP coordinator / public probe | workflow에 연결한 HOLD/actor 요약, 실제 공용 요청 실패·timeout·p95·도착 위치 |
 
-```sh
-aws dynamodb update-time-to-live --table-name "$CONTROL_PLANE_TABLE_NAME" \
-  --time-to-live-specification 'Enabled=true,AttributeName=expiresAt'
-```
+Redis Go proxy/syncworker와 PgBouncer의 관리 카운터는 소유 모듈의 SDK가 읽어 발행합니다. 프록시의 기존 프로토콜과 제어 경로는 바꾸지 않습니다. 앱 heartbeat 역시 제어 프로토콜로 유지하고 그 요약을 CP SDK에서 OTEL로 보냅니다.
 
-## 설정
+## 수신·조회 계약
 
-`.env.example`의 선택 설정을 채웁니다. 실제 토큰은 환경 주입 또는 Secrets Manager 참조를 사용합니다.
+- `POST /internal/otlp/v1/logs`: 표준 OTLP HTTP/protobuf. Collector 전용 Bearer 인증, 1 MiB/512 records 제한, `compression: none`. 계약 버전·발행 module·등록 workflow/migration·원 시각을 검사하고 다시 allowlist를 적용합니다. 잘못된 표본은 OTLP partial success로 거부하고, 저장소 장애는 503으로 재시도를 요청합니다.
+- `GET /v1/workflows/{id}`와 `/observations`는 기존 UI 모델을 유지합니다. snapshot source는 `OTEL`입니다. 엔진 `RESOURCE#`와 관측 `OBS_LATEST#`는 별도이며 오래된 전달은 최신값을 덮어쓰지 않습니다. 수집 실패는 마지막 성공값을 보존합니다.
+- `/telemetry`는 인증된 고정 PromQL/TraceQL 조회입니다. 16개 핵심 수치와 최근 10개 trace만 반환하며, 임의 URL/쿼리를 받지 않습니다. backend 미설정·단절·빈 결과를 구별합니다. 완료된 workflow는 완료 시각 기준으로 조회합니다.
+- 원본 시각이 15초를 넘으면 `STALE`, 없거나 미래이면 `UNKNOWN`, 명시적 관측 실패는 `UNAVAILABLE`입니다. metric 표본 시각과 `foxtrot.observation.age`를 함께 봅니다. 과거 PASS를 현재 전환의 허가로 재사용하지 않습니다.
+- snapshot 이력 24시간, 완료 workflow 최신 snapshot 7일 TTL. 활성 workflow 최신 상태는 유지합니다. 운영 DynamoDB의 `expiresAt` TTL은 IaC platform root에서 활성화합니다. Prometheus/Tempo 예제 보존 기간은 24시간입니다.
+- 이전 `/internal/workflows/{id}/preparation`은 410 `USE_OTLP`입니다. IaC 보고 CLI도 OTEL SDK를 사용합니다.
+
+## CP 환경
 
 ```dotenv
+CONTROL_PLANE_OBSERVATION_TOKEN_SECRET=env:OBSERVATION_TOKEN
+CONTROL_PLANE_PROMETHEUS_URL=http://prometheus.internal:9090
+CONTROL_PLANE_TEMPO_URL=http://tempo.internal:3200
 CONTROL_PLANE_PUBLIC_PROBE_URL=https://app.example.com/api/migration-probe
 CONTROL_PLANE_PUBLIC_PROBE_SERVED_BY={"aws-web":"aws","gcp-web":"gcp"}
-CONTROL_PLANE_OBSERVATION_TOKEN_SECRET=env:OBSERVATION_TOKEN
 ```
 
-`PUBLIC_PROBE_URL`은 Cloudflare를 통하는 **앱 URL**입니다. OAuth callback용 `CONTROL_PLANE_PUBLIC_URL`과 다릅니다. `SERVED_BY` 매핑의 값은 seed의 환경 이름과 일치해야 합니다. demo 앱의 `SERVED_BY` 값도 등록합니다. URL을 생략하면 공용 probe를 보내지 않습니다. 준비 토큰을 생략하면 수입 경로는 비활성입니다.
+CP도 아래 공통 SDK 환경을 설정해야 APP/PUBLIC 표본과 작업 trace를 발행합니다. 공용 URL은 OAuth callback URL이 아닌 Cloudflare **앱 ingress**입니다. 무캐시 200 + `{"ok":true}`/`X-Served-By`를 검사합니다. 60초 probe 비율은 실제 전체 사용자 트래픽 비율이 아니며, probe 실패 구간은 전체 사용자 중단시간이 아닙니다. 미보고 WebSocket 수는 null입니다. LB `configVerified`와 공용 도착 위치를 구분합니다.
 
-공용 probe는 1초 간격을 목표로, 한 번에 1개 요청과 2초 timeout을 사용합니다. HTTP 200 + `{"ok":true}`를 확인합니다. `Cache-Control: no-store`, Cloudflare cache 상태와 `Age`를 검사하며 캐시/위치 불명 응답은 도착 비율에서 제외합니다. 60초 구간의 시도·실패·timeout·위치 미확인·누락·최대 간격과 성공 p95를 함께 표시합니다. timeout은 실패에도 포함됩니다. 30개 표본 기준은 표시 참고값이며 canary의 통계적 안전성을 보장하지 않습니다. 실패 구간도 샘플 시각이며 전체 사용자 중단시간이 아닙니다.
+## 검증
 
-## 준비 작업 연결
+`uv run ruff check .`, `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`.
+`tests/integration/test_otel_stack.py`는 SDK → 실제 Collector → CP/Prometheus/Tempo 및 stale 처리를 검증합니다. 파일 머리의 격리 포트/테스트 토큰으로 로컬 stack을 실행한 뒤 `RUN_OTEL_STACK=1 uv run pytest tests/integration/test_otel_stack.py`로 재현합니다. 클라우드 이전과 Cloudflare 변경은 실행하지 않습니다.
 
-`POST /internal/workflows/{id}/preparation`은 별도 `OBSERVATION_TOKEN`으로 인증합니다. workload heartbeat 토큰과 다릅니다. `resource`는 `INFRA` 또는 `COMPUTE`, `data.workflowId`는 URL의 실제 workflow ID여야 합니다. 원래 `observedAt`과 허용된 요약 필드만 저장합니다. 서비스 URL이나 실행 명령을 수입하지 않습니다.
+## OTEL 실행 설정
 
-IaC 저장소의 `tools/report_observations.py`가 실제 job/plan/handoff 또는 COMPUTE 상태 API 결과를 이 경로로 보냅니다. `--watch`는 COMPUTE를 5초마다 읽는 실행 모드입니다. Terraform plan/apply 실행기 자체를 구현하지는 않습니다. COMPUTE는 PREPARE/START_SYNC 준비 프로필이며 데이터 모듈의 CUTOVER/ROLLBACK 순회에 추가하지 않습니다.
+공식 OpenTelemetry SDK가 OTLP HTTP/protobuf로 로그·메트릭·트레이스를 내보냅니다. 아래 값을 **프로세스 환경**에 주입합니다. endpoint가 없거나 `OTEL_SDK_DISABLED=true`이면 전송하지 않습니다. `.env` 파일을 만드는 것만으로 Python 프로세스 환경이 바뀌지는 않습니다.
 
-## 적용 순서와 완료 확인
+```dotenv
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.internal:4318
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+OTEL_EXPORTER_OTLP_HEADERS=Authorization=Bearer%20<module-ingest-token>
+```
 
-1. 각 모듈과 demo의 같은 이름 브랜치를 검토·배포합니다. DB `details.database`, Redis `details.redis.sync/proxy`, 객체의 시각/앱 ack/검증 필드를 확인합니다.
-2. 컨트롤 플레인의 seed에 실제 어댑터 주소·secret 참조·기대 앱 수를 등록합니다. 관측 설정과 DynamoDB TTL을 적용합니다.
-3. workflow ID에 맞춰 실제 IaC·COMPUTE 준비 결과를 보고합니다. 예제 handoff를 실행 근거로 사용하지 않습니다.
-4. 플랫폼의 `VITE_API_BASE_URL` 또는 `/api` 프록시를 컨트롤 플레인에 연결합니다. 서비스 토큰을 `VITE_*`에 넣지 않습니다.
-5. 리허설에서 정상 이전·허용된 복귀·수집 단절·WebSocket 잔존을 확인합니다. 캐시된 모듈 응답과 통신 실패가 최신 정상값으로 보이지 않는지 확인합니다.
+Collector는 IaC의 `observability/compose.yaml`로 준비합니다. Collector → CP에는 별도 `OBSERVATION_TOKEN`을 씁니다. 모듈에 CP 수신 토큰을 주지 않습니다. 운영 주소는 사설망/VPN에서 접근하도록 구성하고, TLS를 사용하는 경우 SDK의 `OTEL_EXPORTER_OTLP_CERTIFICATE`와 HTTPS endpoint를 설정합니다. 앱 환경 값·DSN·Terraform output·원시 키·오류 원문은 전송하지 않습니다.
 
-DB의 기본 관리형 논리 복제 프로필은 대상 쓰기 후 역복제를 제공하지 않습니다. `targetWritesPossible`은 실제 쓰기 수가 아닙니다. Redis `copied`는 재복사 포함 처리 건수, `lag_ms`는 heartbeat/알림 계열 값입니다. 객체 앱 `live`와 현재 generation의 `acked`를 구분하고 기대 앱 수는 seed에서 유지합니다. 동기화/검증 시각이 없는 초기 backlog와 복사량은 미확인으로 표시합니다.
+진행 상태는 OTEL 구조화 로그 → Collector → CP의 `OBS_LATEST`/24시간 이력, 수치는 Prometheus, 작업 span은 Tempo에 저장합니다. 플랫폼은 CP API만 조회합니다. 제어 명령·승인·멱등성·판정 근거는 기존 저장소가 원본이며 OTEL 전송 성공을 전환 조건으로 사용하지 않습니다. 관측이 끊겨도 이전 값을 0이나 성공으로 바꾸지 않습니다.
 
-앱의 HTTP 업무 in-flight와 WebSocket 잔존 수는 별도입니다. 미보고·만료된 인스턴스가 있으면 WebSocket 합계는 null입니다. 새 workflow가 시작되면 이전 workflow에는 저장된 앱 관측을 표시합니다.
-
-이 변경의 자동 테스트는 fake/임시 저장소와 로컬 어댑터를 사용합니다. 실서비스 배포, 실제 데이터 이전, Cloudflare 설정 변경은 별도 리허설에서 검증해야 합니다.
+Python `telemetry.py`/`telemetry_contract.py`는 독립 이미지에 포함한 공통 계약 v1 사본입니다. 계약을 바꾸면 CP와 모든 Python 발행자의 사본 및 SDK 계약 테스트를 함께 갱신합니다. metric에는 operation/transition ID·키·URL을 label로 넣지 않으며, 값 캐시는 최대 2048 series/20초입니다. workflow ID는 마이그레이션별 화면 조회를 위한 제한된 차원입니다.

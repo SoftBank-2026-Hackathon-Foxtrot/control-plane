@@ -30,6 +30,7 @@ from control_plane.engine.evidence import RunningEvidence
 from control_plane.engine.recovery import Abort, ManualReconcile, Rollback
 from control_plane.engine.stages import build_handlers
 from control_plane.store.table import VersionConflict
+from control_plane.telemetry import get_telemetry
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +95,8 @@ class Engine:
         if not owned:
             return
         try:
-            await self._drive(workflow)
+            with get_telemetry("control-plane").operation("WORKFLOW_STEP", workflow=workflow.id):
+                await self._drive(workflow)
         except VersionConflict:
             # A person's command won the race. Decide again from what is there now.
             log.info("workflow %s changed during a tick", workflow.id)

@@ -9,9 +9,15 @@ from control_plane.api.routes import _detail
 from control_plane.clock import stamp
 from control_plane.domain.models import ActorState, ResourceKind, ResourceState, WorkflowStatus
 from control_plane.observation_projection import freshness, present, status_projection
-from control_plane.observations import ObservationStore, made_progress, observation_state
+from control_plane.observations import (
+    ObservationStore,
+    made_progress,
+    observation_state,
+    watched_workflows,
+)
 from control_plane.public_probe import sample, summarize
 from tests.conftest import World
+from tests.test_otel import deliver
 
 
 async def test_old_and_failed_observations_preserve_last_success(world: World) -> None:
@@ -68,6 +74,8 @@ async def test_collection_is_independent_of_engine_and_preserves_resource_state(
     client = world.platform.observation_loop.adapters[ResourceKind.DATABASE]
     client.migration = AsyncMock(return_value=MigrationView(raw))
     await world.platform.observation_loop.tick()
+    client.migration.assert_not_awaited()
+    assert (await deliver(world, raw)).status_code == 200
     assert await world.repo.resource(workflow.id, ResourceKind.DATABASE) == state
     detail = await _detail(world.platform.context, workflow)
     observed = next(row for row in detail.resources if row.kind is ResourceKind.DATABASE)
@@ -94,10 +102,12 @@ async def test_terminal_tail_survives_active_slot_release(world: World) -> None:
         return_value=MigrationView({"workflowId": workflow.id, "migrationId": "r"})
     )
     await world.platform.observation_loop.tick()
-    assert client.migration.await_count == 1
+    client.migration.assert_not_awaited()
+    assert workflow.id in [w.id for w in await watched_workflows(world.repo, world.clock.now())]
     world.clock.advance(61)
     await world.platform.observation_loop.tick()
-    assert client.migration.await_count == 1
+    client.migration.assert_not_awaited()
+    assert workflow.id not in [w.id for w in await watched_workflows(world.repo, world.clock.now())]
 
 
 def test_expired_checks_are_history_and_counters_do_not_fake_progress(world: World) -> None:

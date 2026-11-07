@@ -27,6 +27,7 @@ from control_plane.domain.models import (
 from control_plane.domain.stages import PLAN
 from control_plane.seed import Seed
 from control_plane.store.repository import Repository
+from control_plane.telemetry import get_telemetry
 
 log = logging.getLogger(__name__)
 
@@ -214,14 +215,20 @@ class ProbeLoop:
         hold, _ = await self.repo.hold(self.seed.scope)
         if hold.desired is HoldDesired.HOLD:
             return
-        probes = await asyncio.gather(
-            *(
-                self.prober.business(env, definition.app_url)
-                for env, definition in self.seed.environments.items()
+        with get_telemetry("control-plane").operation("BUSINESS_PROBE", workflow=active[0]):
+            probes = await asyncio.gather(
+                *(
+                    self.prober.business(env, definition.app_url)
+                    for env, definition in self.seed.environments.items()
+                )
             )
-        )
         for probe in probes:
             await self.repo.add_business_probe(active[0], probe)
+            get_telemetry("control-plane").measure(
+                "foxtrot.probe.business_passed",
+                int(probe.passed),
+                {"workflow.id": active[0], "environment": probe.env},
+            )
             if not probe.passed:
                 log.warning("business probe failed on %s: %s", probe.env, probe.reason)
 

@@ -5,7 +5,6 @@ The browser calls `/api/...`; the gateway, or Vite in development, removes the p
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
@@ -41,7 +40,7 @@ from control_plane.api.schemas import (
 )
 from control_plane.domain.models import ResourceKind, ResourceState, Workflow
 from control_plane.errors import ApiError
-from control_plane.observation_projection import PREPARATION, freshness, present, project, timestamp
+from control_plane.observation_projection import freshness, present, timestamp
 from control_plane.observations import ObservationStore, observation_state
 from control_plane.workflows import CommandInput
 
@@ -302,8 +301,8 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
             "data": saved.get("data") if saved else None,
             "observation": observation_state(saved, context.clock.now()),
         }
-    summary = await repo.table.get(f"WORKFLOW#{workflow.id}", "PUBLIC_SUMMARY")
-    public_probe = json.loads(summary.body) if summary else None
+    summary = await store.latest(workflow.id, "PUBLIC")
+    public_probe = summary.get("data") if summary else None
     if public_probe:
         public_probe["freshness"] = freshness(public_probe.get("lastSampleAt"), context.clock.now())
     business = []
@@ -375,6 +374,8 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
             saved_app = app["data"]
             hold_view = HoldView(
                 is_live=False,
+                redis_route=saved_app.get("redisRoute", "DIRECT"),
+                redis_route_generation=saved_app.get("redisRouteGeneration", 0),
                 desired=saved_app["desired"],
                 generation=saved_app["generation"],
                 held_since=saved_app.get("heldSince"),
@@ -401,7 +402,10 @@ def _resource(
     state: ResourceState, snapshot: dict[str, Any] | None = None, now: datetime | None = None
 ) -> ResourceView:
     # The observer owns separate keys and never overwrites engine state.
-    if snapshot and (snapshot.get("data") or {}).get("migrationId") != state.migration_id:
+    if snapshot and (snapshot.get("data") or {}).get("migrationId") not in (
+        None,
+        state.migration_id,
+    ):
         snapshot = None
     status: dict[str, Any] = (snapshot or {}).get("data") or state.last_status or {}
     if now:
@@ -468,15 +472,4 @@ async def observations(
 async def preparation_report(
     workflow_id: str, body: PreparationReport, context: Context
 ) -> dict[str, str]:
-    workflow = await _workflow(context, workflow_id)
-    if len(json.dumps(body.data)) > 32768 or body.data.get("workflowId") != workflow.id:
-        raise ApiError(422, "INVALID_REPORT", "report must be bounded and match the workflow")
-    at = timestamp(body.data.get("observedAt"))
-    if at is None or at > context.clock.now():
-        raise ApiError(422, "INVALID_REPORT", "report requires its original observation time")
-    data = project(body.data, PREPARATION)
-    data["observed"] = {"observedAt": body.data["observedAt"]}
-    await ObservationStore(context.repo.table).save(
-        workflow.id, body.resource, data, context.clock.now()
-    )
-    return {"status": "RECORDED"}
+    raise ApiError(410, "USE_OTLP", "publish preparation snapshots through the OTEL Collector")

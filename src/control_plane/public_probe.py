@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import secrets
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -17,6 +17,7 @@ from control_plane.clock import Clock, stamp
 from control_plane.observation_projection import timestamp
 from control_plane.observations import ObservationStore, watched_workflows
 from control_plane.store.repository import Repository
+from control_plane.telemetry import get_telemetry
 
 log = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ class PublicProbeLoop:
         self.repo, self.http, self.clock, self.url, self.mapping = repo, http, clock, url, mapping
         self.store = ObservationStore(repo.table)
         self.owner = secrets.token_hex(12)
+        self.samples: dict[str, deque[dict[str, Any]]] = {}
 
     async def run(self) -> None:
         if not self.url:
@@ -165,27 +167,16 @@ class PublicProbeLoop:
                 workflow.id, self.owner, self.clock.now(), channel="public"
             ):
                 continue
-            result = await sample(self.http, self.url, self.mapping, self.clock)
+            with get_telemetry("control-plane").operation("PUBLIC_PROBE", workflow=workflow.id):
+                result = await sample(self.http, self.url, self.mapping, self.clock)
             now = self.clock.now()
-            pk = f"WORKFLOW#{workflow.id}"
-            await self.repo.table.put(
-                pk,
-                f"PUBLIC#{result['at']}",
-                json.dumps(result),
-                expected_version=None,
-                expires_at=int((now + timedelta(hours=24)).timestamp()),
-            )
             start = max(workflow.created_at, now - timedelta(seconds=60))
-            page = await self.repo.table.query(
-                pk, "PUBLIC#", start=f"PUBLIC#{stamp(start)}", end=f"PUBLIC#{stamp(now)}", limit=120
-            )
-            summary = summarize([json.loads(item.body) for item in page.items], start, now)
-            await self.repo.table.put(
-                pk,
-                "PUBLIC_SUMMARY",
-                json.dumps(summary),
-                expected_version=None,
-                expires_at=int((workflow.finished_at + timedelta(days=7)).timestamp())
-                if workflow.finished_at
-                else None,
-            )
+            samples = self.samples.setdefault(workflow.id, deque(maxlen=120))
+            samples.append(result)
+            recent = [s for s in samples if (timestamp(s["at"]) or now) >= start]
+            summary = summarize(recent, start, now)
+            summary["workflowId"] = workflow.id
+            summary["observed"] = {"observedAt": result["at"]}
+            get_telemetry("control-plane").snapshot("PUBLIC", summary)
+        active = {w.id for w in await watched_workflows(self.repo, self.clock.now())}
+        self.samples = {key: value for key, value in self.samples.items() if key in active}

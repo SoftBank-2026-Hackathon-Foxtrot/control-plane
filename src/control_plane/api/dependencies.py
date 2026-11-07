@@ -108,4 +108,4 @@ async def observation_caller(
             authorization.encode(), f"Bearer {context.observation_token}".encode()
         )
     ):
-        raise ApiError(401, "UNAUTHENTICATED", "a preparation reporting token is required")
+        raise ApiError(401, "UNAUTHENTICATED", "a Collector ingest token is required")

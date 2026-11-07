@@ -578,7 +578,10 @@ async def test_preparation_reports_need_a_separate_token_and_preserve_original_t
     response = await console.http.post(
         url, json=body, headers={"Authorization": "Bearer report-token"}
     )
-    assert response.status_code == 200
+    assert response.status_code == 410
+    from tests.test_otel import deliver
+
+    assert (await deliver(world, body["data"], kind="INFRA", module="iac")).status_code == 200
     detail = (await console.http.get(f"/v1/workflows/{workflow_id}")).json()
     assert "secret" not in str(detail["preparation"])
     assert detail["preparation"]["INFRA"]["data"]["observedAt"] == body["data"]["observedAt"]

@@ -11,10 +11,11 @@ from typing import Any
 
 from control_plane.adapters.client import AdapterClient
 from control_plane.clock import Clock, stamp
-from control_plane.domain.models import ResourceKind, ResourceState, Workflow
-from control_plane.observation_projection import freshness, status_projection, timestamp
+from control_plane.domain.models import ResourceKind, Workflow
+from control_plane.observation_projection import freshness, timestamp
 from control_plane.store.repository import Repository
 from control_plane.store.table import Table, VersionConflict
+from control_plane.telemetry import get_telemetry
 from control_plane.workload.coordinator import WorkloadCoordinator
 
 log = logging.getLogger(__name__)
@@ -37,6 +38,7 @@ class ObservationStore:
         *,
         error: str | None = None,
         expires_at: int | None = None,
+        source: str = "OTEL",
     ) -> None:
         """CAS rejects older responses. Collection errors retain the last success."""
         pk, sk = f"WORKFLOW#{workflow}", f"OBS_LATEST#{resource}"
@@ -61,6 +63,7 @@ class ObservationStore:
                 progress_at = stamp(at)
             value = {
                 "resource": resource,
+                "source": source,
                 "collectedAt": stamp(at),
                 "collectionError": error,
                 "lastSuccessAt": stamp(at) if data is not None else previous.get("lastSuccessAt"),
@@ -201,13 +204,6 @@ class ObservationLoop:
     async def tick(self) -> None:
         for workflow in await watched_workflows(self.repo, self.clock.now()):
             if await self.store.own(workflow.id, self.owner, self.clock.now(), channel="resources"):
-                await asyncio.gather(
-                    *(
-                        self.collect(workflow, resource)
-                        for resource in await self.repo.resources(workflow.id)
-                        if resource.migration_id
-                    )
-                )
                 await self.collect_app(workflow)
 
     async def collect_app(self, workflow: Workflow) -> None:
@@ -220,6 +216,9 @@ class ObservationLoop:
         actors = await self.coordinator.actor_statuses(hold.generation)
         now = self.clock.now()
         data = {
+            "workflowId": workflow.id,
+            "redisRoute": hold.redis_route,
+            "redisRouteGeneration": hold.redis_route_generation,
             "desired": hold.desired.value,
             "generation": hold.generation,
             "heldSince": stamp(hold.held_since) if hold.held_since else None,
@@ -239,37 +238,4 @@ class ObservationLoop:
                 for actor in actors
             ],
         }
-        await self.store.save(
-            workflow.id,
-            "APP",
-            data,
-            now,
-            expires_at=int((workflow.finished_at + timedelta(days=7)).timestamp())
-            if workflow.finished_at
-            else None,
-        )
-
-    async def collect(self, workflow: Workflow, resource: ResourceState) -> None:
-        started = self.clock.now()
-        data, error = None, None
-        try:
-            assert resource.migration_id is not None
-            async with asyncio.timeout(12):
-                view = await self.adapters[resource.kind].migration(resource.migration_id)
-            if (
-                view.migration_id != resource.migration_id
-                or view.raw.get("workflowId") != workflow.id
-            ):
-                error = "IDENTITY_MISMATCH"
-            else:
-                data = status_projection(view.raw)
-        except Exception:
-            error = "ADAPTER_UNREACHABLE"
-        expires = (
-            int((workflow.finished_at + timedelta(days=7)).timestamp())
-            if workflow.finished_at
-            else None
-        )
-        await self.store.save(
-            workflow.id, resource.kind.value, data, started, error=error, expires_at=expires
-        )
+        get_telemetry("control-plane").snapshot("APP", data)
