@@ -18,7 +18,7 @@ from control_plane.api.dependencies import (
     workload_caller,
 )
 from control_plane.api.idempotency import once
-from control_plane.api.resource_observations import read_resources
+from control_plane.api.resource_observations import enrich_observed, read_resources
 from control_plane.api.schemas import (
     ActorView,
     ApplicationView,
@@ -177,7 +177,14 @@ async def get_workflow(workflow_id: str, _: CurrentSession, context: Context) ->
     # Newer release branches already collect and project observations independently (including
     # OTEL). Preserve that pipeline rather than overwriting it with direct polling.
     if "observation" in ResourceView.model_fields:
-        return detail
+        return detail.model_copy(
+            update={
+                "resources": [
+                    enrich_observed(resource, workflow, context.clock.now())
+                    for resource in detail.resources
+                ]
+            }
+        )
     return detail.model_copy(update={"resources": await read_resources(context, workflow)})
 
 

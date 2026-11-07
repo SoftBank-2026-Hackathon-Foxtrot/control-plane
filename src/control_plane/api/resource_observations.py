@@ -9,7 +9,7 @@ from typing import Any
 
 from control_plane.adapters.client import AdapterError, AdapterUnreachable
 from control_plane.api.dependencies import ApiContext
-from control_plane.api.schemas import ObservedResourceView
+from control_plane.api.schemas import ObservedResourceView, ResourceView
 from control_plane.domain.models import ResourceState, Workflow, WorkflowStatus
 from control_plane.telemetry_contract import STATUS, fields, project
 
@@ -71,6 +71,8 @@ def project_resource(
     if collection_error or historical:
         freshness = "STALE" if status else "UNAVAILABLE"
     details = _present(_mapping(status.get("details")))
+    if _mapping(details.get("database")).get("observationAvailable") is False:
+        freshness = "UNAVAILABLE"
     redis = _mapping(details.get("redis"))
     for name in ("sync", "proxy"):
         part = _mapping(redis.get(name))
@@ -200,4 +202,38 @@ async def read_resources(context: ApiContext, workflow: Workflow) -> list[Observ
                 for state in await context.repo.resources(workflow.id)
             )
         )
+    )
+
+
+def enrich_observed(
+    resource: ResourceView, workflow: Workflow, now: datetime
+) -> ObservedResourceView:
+    """Add stream display data to the team's snapshot; never replace its collected evidence."""
+    payload = resource.model_dump()
+    raw = resource.model_dump(mode="json", by_alias=True)
+    raw["observed"] = {
+        "observedAt": raw.get("observedAt"),
+        "route": resource.route,
+        "businessWriteAccess": raw.get("businessWriteAccess"),
+        "targetWritesPossible": resource.target_writes_possible,
+    }
+    observation = _mapping(payload.get("observation"))
+    error = observation.get("collectionError")
+    if observation.get("freshness") != "FRESH":
+        error = error or "SNAPSHOT_NOT_FRESH"
+    projected = project_resource(
+        ResourceState(kind=resource.kind, migration_id=resource.migration_id),
+        now=now,
+        raw=raw,
+        collection_error=error,
+        historical=workflow.status in {WorkflowStatus.COMPLETED, WorkflowStatus.ABORTED},
+    )
+    replication = (projected.replication or {}) | _present(_mapping(payload.get("replication")))
+    return ObservedResourceView.model_validate(
+        payload
+        | {
+            "details": _present(_mapping(payload.get("details"))),
+            "streams": projected.streams,
+            "replication": replication or None,
+        }
     )

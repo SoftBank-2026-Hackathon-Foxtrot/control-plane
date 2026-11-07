@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from control_plane.adapters.client import AdapterUnreachable, MigrationView
-from control_plane.api.resource_observations import project_resource
+from control_plane.api.resource_observations import enrich_observed, project_resource
 from control_plane.api.schemas import ResourceView
 from control_plane.clock import stamp
 from control_plane.domain.models import ResourceKind, ResourceState, WorkflowStatus
@@ -138,6 +138,15 @@ def test_public_projection_drops_private_adapter_fields_and_old_transition_check
     assert result.checks[0]["currentResult"] == "UNKNOWN"
 
 
+def test_database_unavailable_observation_is_not_promoted_to_fresh() -> None:
+    clock = FakeClock()
+    raw = redis_status(clock)
+    raw["details"]["database"] = {"observationAvailable": False}
+    result = project_resource(state_for(raw, clock), now=clock.now())
+    assert result.observation["freshness"] == "UNAVAILABLE"
+    assert result.checks[0]["currentResult"] == "UNKNOWN"
+
+
 async def test_existing_observer_pipeline_is_returned_without_direct_repolling(
     world: World,
     monkeypatch: pytest.MonkeyPatch,
@@ -153,8 +162,63 @@ async def test_existing_observer_pipeline_is_returned_without_direct_repolling(
     direct_reader = AsyncMock()
     monkeypatch.setattr(routes, "read_resources", direct_reader)
     result = await routes.get_workflow(workflow.id, None, world.platform.context)
-    assert result is original
+    before, after = original.model_dump(), result.model_dump()
+    for previous, enriched in zip(before.pop("resources"), after.pop("resources"), strict=True):
+        assert {key: enriched[key] for key in previous} == previous
+        assert set(enriched) - set(previous) <= {"streams"}
+    assert before == after
     direct_reader.assert_not_awaited()
+
+
+async def test_enrichment_omits_unreported_nested_objects_without_making_up_values(
+    world: World,
+) -> None:
+    workflow = await world.start()
+    raw = redis_status(world.clock)
+    view = project_resource(state_for(raw, world.clock), now=world.clock.now()).model_copy(
+        update={
+            "details": {"redis": {"sync": None, "proxy": None}},
+            "replication": {"forward": {"state": "RUNNING"}, "reverse": None, "initialCopy": None},
+        }
+    )
+    result = enrich_observed(view, workflow, world.clock.now())
+    assert result.details == {"redis": {}}
+    assert result.replication == {"forward": {"state": "RUNNING"}}
+    assert view.replication["initialCopy"] is None
+
+
+async def test_otel_snapshot_gains_streams_without_overwriting_team_evidence(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    if "observation" not in ResourceView.model_fields:
+        pytest.skip("requires the team observer branch for the merge compatibility check")
+    from control_plane.observations import ObservationStore
+
+    workflow = await world.start()
+    raw = redis_status(world.clock)
+    await world.repo.save_resource(workflow.id, state_for(raw, world.clock))
+    store = ObservationStore(world.table)
+    await store.save(workflow.id, "REDIS", raw, world.clock.now(), source="OTEL")
+    before = await store.latest(workflow.id, "REDIS")
+    reader = AsyncMock()
+    monkeypatch.setattr(world.workflows.adapters[ResourceKind.REDIS], "migration", reader)
+    console = Console(world, SETTINGS)
+    try:
+        await console.login()
+        response = await console.http.get(f"/v1/workflows/{workflow.id}")
+        assert response.status_code == 200
+        redis = next(r for r in response.json()["resources"] if r["kind"] == "REDIS")
+        assert redis["observation"]["source"] == "OTEL"
+        assert redis["observation"]["lastSuccessAt"] == before["lastSuccessAt"]
+        assert redis["streams"][0]["direction"] == "REVERSE"
+        assert redis["streams"][0]["copied"] == 350
+        assert redis["streams"][0]["freshness"] == "FRESH"
+        assert redis["details"]["redis"]["proxy"]["paused"] is False
+        assert await store.latest(workflow.id, "REDIS") == before
+        reader.assert_not_awaited()
+    finally:
+        await console.http.aclose()
 
 
 @pytest.mark.parametrize(
