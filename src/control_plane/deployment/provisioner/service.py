@@ -91,6 +91,7 @@ class Service:
             )
         suffix = secrets.token_hex(2)
         tfvars = spec.render(req, self.catalog, self.config, suffix, self.today())
+        self._scope_app_metrics(req, tfvars)
         env_id = f"env-{uuid.uuid4().hex[:12]}"
         stamp = now()
         self.store.insert_environment(
@@ -177,6 +178,7 @@ class Service:
         req = spec.parse(merged, self.catalog, self.config)
         suffix = env["deployment_id"].rsplit("-", 1)[1]  # keep the same resources
         tfvars = spec.render(req, self.catalog, self.config, suffix, self.today())
+        self._scope_app_metrics(req, tfvars)
         if req["cloud"] == "aws":
             tfvars["final_snapshot_identifier"] = env["tfvars"]["final_snapshot_identifier"]
         tfvars["metadata"] = env["tfvars"]["metadata"]  # tags stay as created
@@ -247,6 +249,33 @@ class Service:
             "status": "DESTROYING",
         }
 
+    @staticmethod
+    def _scope_app_metrics(req: dict, tfvars: dict) -> None:
+        for field in ("env", "apiEnv", "workerEnv", "secretEnv"):
+            spec.require(
+                "OTEL_RESOURCE_ATTRIBUTES" not in req["app"].get(field, {}),
+                "OTEL_RESOURCE_ATTRIBUTES is supplied by the platform",
+            )
+        application = req["org"].get("name")
+        if not isinstance(application, str) or not re.fullmatch(
+            r"[A-Za-z0-9_.:-]{1,64}", application
+        ):
+            application = req["org"]["id"]
+        attributes = {
+            "application.id": application,
+            "deployment.environment.name": req["cloud"],
+            "foxtrot.owner.id": req["org"]["id"],
+            "foxtrot.deployment.id": tfvars["deployment_id"],
+            "foxtrot.workload.kind": "USER_APPLICATION",
+        }
+        # The app, API and queue worker share this deployment identity. Never inherit platform tags.
+        tfvars["app"]["env"] = {
+            **tfvars["app"].get("env", {}),
+            "OTEL_RESOURCE_ATTRIBUTES": ",".join(
+                f"{key}={value}" for key, value in attributes.items()
+            ),
+        }
+
     def view(self, env: dict) -> dict:
         handoff = env["handoff"] or {}
         return {
@@ -256,6 +285,7 @@ class Service:
             "template": env["template"],
             "workflowId": env["request"].get("workflowId"),
             "sizing": env["tfvars"]["sizing"],
+            "appliedSnapshot": env.get("applied_snapshot"),
             "runtime": {"aws": "ECS_FARGATE", "gcp": "CLOUD_RUN", "onprem": "ON_PREM"}[
                 env["cloud"]
             ],
@@ -388,6 +418,28 @@ class Service:
                     env_id,
                     now(),
                     handoff=handoff,
+                    applied_snapshot={
+                        "sizing": env["tfvars"]["sizing"],
+                        "app": {
+                            key: env["tfvars"].get("app", {})[key]
+                            for key in ("cpu", "memory_mib", "worker_count", "api_workers", "port")
+                            if key in env["tfvars"].get("app", {})
+                        },
+                        "appliedAt": now(),
+                        "jobId": job["id"],
+                        "deploymentId": env["deployment_id"],
+                        "hasTunnelContainer": bool(
+                            env["tfvars"].get("app", {}).get("tunnel_secret")
+                        ),
+                        "resources": {
+                            name: {
+                                key: (handoff.get(name) or {})[key]
+                                for key in ("id", "host", "port", "name", "tls_required")
+                                if key in (handoff.get(name) or {})
+                            }
+                            for name in ("compute", "database", "cache", "storage", "network")
+                        },
+                    },
                     status="INFRA_READY",
                     error=None,
                     readiness={

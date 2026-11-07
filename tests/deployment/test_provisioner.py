@@ -217,7 +217,9 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(after["deployment_id"], before["deployment_id"])
         self.assertEqual(after["tfvars"]["bucket_name"], before["tfvars"]["bucket_name"])
         self.assertEqual(after["tfvars"]["app"]["tunnel_secret"], "arn:aws:secretsmanager:x")
-        self.assertEqual(after["tfvars"]["app"]["env"], {"A": "1"})
+        self.assertEqual(after["tfvars"]["app"]["env"]["A"], "1")
+        self.assertIn("OTEL_RESOURCE_ATTRIBUTES", after["tfvars"]["app"]["env"])
+        self.assertNotIn("OTEL_RESOURCE_ATTRIBUTES", after["request"]["app"]["env"])
         self.assertEqual(after["tfvars"]["app"]["port"], 8000)
         self.assertTrue(after["tfvars"]["enable_cloudflare_tunnel"])
         with self.assertRaises(spec.RequestError):
