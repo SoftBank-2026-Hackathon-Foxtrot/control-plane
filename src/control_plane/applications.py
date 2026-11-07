@@ -89,6 +89,8 @@ class ApplicationService:
     async def idle(self, app: Application) -> None:
         active = await self.repo.active_workflow_id()
         workflow = await self.repo.workflow(active) if active else None
+        if active and workflow is None:
+            raise ApiError(409, "RUNTIME_BUSY", "wait for runtime preparation or recovery")
         if workflow and workflow.application == app.id and not workflow.status.terminal:
             raise ApiError(409, "APPLICATION_BUSY", "finish or recover the active migration first")
 

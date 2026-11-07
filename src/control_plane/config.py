@@ -9,6 +9,8 @@ import boto3
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from control_plane.runtime import RuntimeTarget
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CONTROL_PLANE_", env_file=".env", extra="ignore")
@@ -39,6 +41,8 @@ class Settings(BaseSettings):
     github_allowed_ids: list[int] = []
     session_hours: int = 8
     auth_disabled: bool = False
+    runtime_targets: dict[str, RuntimeTarget] = {}
+    runtime_docker_enabled: bool = False
     personal_catalog_paths: dict[str, str] = {}
     allowed_secret_refs: list[str] = []
     seed_owner_id: str = ""
@@ -47,6 +51,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def safe(self) -> Self:
+        if self.runtime_docker_enabled and self.environment != "local":
+            raise ValueError("Docker driver is local-only")
         if self.auth_disabled and self.environment != "local":
             raise ValueError("auth_disabled is allowed only with environment=local")
         if self.auth_disabled and self.host not in {"127.0.0.1", "localhost"}:

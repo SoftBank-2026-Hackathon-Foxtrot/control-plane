@@ -36,6 +36,8 @@ class Page:
 
 
 class Table(Protocol):
+    async def write_many(self, writes: list[tuple[str, str, str, int]]) -> None: ...
+
     async def get(self, pk: str, sk: str) -> Item | None: ...
 
     async def put(self, pk: str, sk: str, body: str, *, expected_version: int | None) -> int:
@@ -54,6 +56,15 @@ class MemoryTable:
     def __init__(self) -> None:
         self._items: dict[tuple[str, str], Item] = {}
         self._lock = threading.Lock()
+
+    async def write_many(self, writes: list[tuple[str, str, str, int]]) -> None:
+        with self._lock:
+            for pk, sk, _, expected in writes:
+                item = self._items.get((pk, sk))
+                if (item.version if item else 0) != expected:
+                    raise VersionConflict(f"{pk}/{sk}")
+            for pk, sk, body, expected in writes:
+                self._items[(pk, sk)] = Item(pk, sk, expected + 1, body)
 
     async def get(self, pk: str, sk: str) -> Item | None:
         with self._lock:
@@ -122,6 +133,31 @@ class DynamoTable:
     @staticmethod
     def _item(raw: dict[str, Any]) -> Item:
         return Item(raw["pk"]["S"], raw["sk"]["S"], int(raw["version"]["N"]), raw["body"]["S"])
+
+    async def write_many(self, writes: list[tuple[str, str, str, int]]) -> None:
+        operations = []
+        for pk, sk, body, expected in writes:
+            put: dict[str, Any] = {
+                "TableName": self.name,
+                "Item": {
+                    **self._key(pk, sk),
+                    "body": {"S": body},
+                    "version": {"N": str(expected + 1)},
+                },
+                "ConditionExpression": "attribute_not_exists(pk)"
+                if expected == 0
+                else "version = :v",
+            }
+            if expected:
+                put["ExpressionAttributeValues"] = {":v": {"N": str(expected)}}
+            operations.append({"Put": put})
+        try:
+            await asyncio.to_thread(self.client.transact_write_items, TransactItems=operations)
+        except self.client.exceptions.TransactionCanceledException as error:
+            reasons = error.response.get("CancellationReasons", [])
+            if any(reason.get("Code") == "ConditionalCheckFailed" for reason in reasons):
+                raise VersionConflict("transaction condition failed") from error
+            raise
 
     async def get(self, pk: str, sk: str) -> Item | None:
         response = await asyncio.to_thread(

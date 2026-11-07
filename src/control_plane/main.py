@@ -26,6 +26,8 @@ from control_plane.engine.context import Services
 from control_plane.engine.engine import Engine
 from control_plane.errors import ApiError
 from control_plane.probes import AppProber, HttpAppProber, ProbeLoop
+from control_plane.runtime import RuntimeDriver, RuntimeService
+from control_plane.runtime_drivers import DockerDriver, EcsDriver
 from control_plane.seed import Seed, load_seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import DynamoTable, MemoryTable, Table
@@ -59,6 +61,7 @@ def assemble(
     auth: AuthService,
     workload_token: str,
     adapter_factory: Callable[[Seed], dict[ResourceKind, AdapterClient]] | None = None,
+    runtime_drivers: dict[str, RuntimeDriver] | None = None,
 ) -> Platform:
     coordinator = WorkloadCoordinator(repo, seed, clock)
     services = Services(
@@ -84,6 +87,7 @@ def assemble(
             workload_token=workload_token,
             prober=prober,
             services=services,
+            runtime=RuntimeService(repo, clock, runtime_drivers or {}),
         ),
         engine=Engine(services),
         probe_loop=ProbeLoop(repo, seed, prober, clock),
@@ -153,6 +157,14 @@ def build_platform(settings: Settings) -> Platform:
         allowed_github_ids=settings.github_allowed_ids,
         session_hours=settings.session_hours,
     )
+    runtime_drivers: dict[str, RuntimeDriver] = {}
+    if settings.runtime_docker_enabled:
+        runtime_drivers["docker"] = DockerDriver()
+    for target in settings.runtime_targets.values():
+        if target.provider == "ecs":
+            key = f"ecs:{target.region}"
+            if key not in runtime_drivers:
+                runtime_drivers[key] = EcsDriver(target.region)
     platform = assemble(
         settings=settings,
         seed=seed,
@@ -165,6 +177,7 @@ def build_platform(settings: Settings) -> Platform:
         auth=auth,
         workload_token=secret(settings.workload_token_secret),
         adapter_factory=adapters_for_seed,
+        runtime_drivers=runtime_drivers,
     )
     platform.clients = clients
     return platform
@@ -185,6 +198,7 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
             [
                 asyncio.create_task(platform.engine.run()),
                 asyncio.create_task(platform.probe_loop.run()),
+                asyncio.create_task(platform.context.runtime.run()),
             ]
             if run_loops
             else []

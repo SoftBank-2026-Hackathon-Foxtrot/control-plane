@@ -171,7 +171,7 @@ async def verify(
         await service(context).idle(app)
         service(context).expect(app, body.expected_version)
         # Runtime observation is connected by the runtime adapter, never inferred from a digest.
-        available = False
+        available = await context.runtime.image_available(session.user.id, app.id, app.image)
         return await verify_application(
             service(context),
             app,
@@ -248,3 +248,62 @@ async def audit_events(
         limit=limit,
     )
     return {"events": [json.loads(item.body) for item in page.items], "nextCursor": page.next_sk}
+
+
+@router.post("/v1/applications/{app_id}/environments/{environment_id}/prepare", status_code=202)
+async def prepare_runtime(
+    app_id: str,
+    environment_id: str,
+    body: ConfigurationInput,
+    session: CheckedSession,
+    context: Context,
+    idempotency_key: str | None = Header(default=None),
+) -> object:
+    target = context.settings.runtime_targets.get(f"{session.user.id}/{environment_id}")
+    if target is None:
+        raise ApiError(
+            422, "RUNTIME_NOT_ASSIGNED", "no runtime assigned to this personal workspace"
+        )
+    return await once(
+        context.repo,
+        user_id=session.user.id,
+        path=f"/v1/applications/{app_id}/environments/{environment_id}/prepare",
+        key=idempotency_key,
+        body=body.model_dump(),
+        success_status=202,
+        execute=lambda: context.runtime.prepare(
+            session.user.id,
+            app_id,
+            environment_id,
+            body.expected_version,
+            target,
+        ),
+    )
+
+
+@router.get("/v1/runtime-operations/{operation_id}")
+async def runtime_status(operation_id: str, session: CurrentSession, context: Context) -> object:
+    return await context.runtime.get(session.user.id, operation_id)
+
+
+@router.post("/v1/runtime-operations/{operation_id}/{action}", status_code=202)
+async def runtime_action(
+    operation_id: str,
+    action: str,
+    body: ConfigurationInput,
+    session: CheckedSession,
+    context: Context,
+    idempotency_key: str | None = Header(default=None),
+) -> object:
+    if action not in {"restore", "reconcile"}:
+        raise ApiError(404, "NOT_FOUND", "no runtime action")
+    method = context.runtime.request_restore if action == "restore" else context.runtime.reconcile
+    return await once(
+        context.repo,
+        user_id=session.user.id,
+        path=f"/v1/runtime-operations/{operation_id}/{action}",
+        key=idempotency_key,
+        body=body.model_dump(),
+        success_status=202,
+        execute=lambda: method(session.user.id, operation_id, body.expected_version),
+    )
