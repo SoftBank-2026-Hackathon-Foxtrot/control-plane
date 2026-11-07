@@ -22,7 +22,7 @@ class Directive:
     generation: int
     object_migration_id: str | None
     poll_after_ms: int
-    redis_route: RedisRoute = RedisRoute.DIRECT
+    redis_route: RedisRoute = RedisRoute.PROXY
     redis_endpoint: str | None = None
     redis_route_generation: int = 0
 
@@ -80,32 +80,26 @@ class WorkloadCoordinator:
                 stale_connections=stale_connections,
             )
         )
-        hold, _ = await self.repo.hold(self.scope)
+        hold = await self.hold()
         return Directive(
             desired=hold.desired,
             generation=hold.generation,
             object_migration_id=hold.object_migration_id,
             poll_after_ms=await self._poll_interval(hold),
-            redis_route=hold.redis_route,
-            redis_endpoint=hold.redis_endpoint,
+            redis_route=RedisRoute.PROXY,
+            redis_endpoint=None,
             redis_route_generation=hold.redis_route_generation,
         )
 
     async def _poll_interval(self, hold: HoldState) -> int:
-        """Fast while stopping, while a Redis route change is not followed yet, and until the
-        processes have had time to report that they run."""
+        """Fast while stopping and until processes have reported that they run again."""
         timings = self.seed.timings
         settling = hold.released_at is not None and (
             (self.clock.now() - hold.released_at).total_seconds() < timings.resume_workload_timeout
         )
         if hold.desired is HoldDesired.HOLD or settling:
             return timings.fast_poll_ms
-        # Read only when nothing else already makes it fast: it scans every report.
-        moving = (
-            hold.redis_route_generation > 0
-            and not (await self.route_followed(hold.redis_route_generation, hold.redis_route))[0]
-        )
-        return timings.fast_poll_ms if moving else timings.idle_poll_ms
+        return timings.idle_poll_ms
 
     # ---- what the engine calls ----------------------------------------------------------------
     async def publish_object_migration(self, workflow_id: str, migration_id: str) -> None:
@@ -159,8 +153,24 @@ class WorkloadCoordinator:
         raise VersionConflict(f"hold of {self.scope}")
 
     async def hold(self) -> HoldState:
-        hold, _ = await self.repo.hold(self.scope)
-        return hold
+        for _ in range(5):
+            hold, version = await self.repo.hold(self.scope)
+            if hold.redis_route is RedisRoute.PROXY and hold.redis_endpoint is None:
+                return hold
+            # Retire a persisted temporary-proxy order without changing business HOLD ownership.
+            updated = hold.model_copy(
+                update={
+                    "redis_route": RedisRoute.PROXY,
+                    "redis_endpoint": None,
+                    "redis_route_generation": hold.redis_route_generation + 1,
+                }
+            )
+            try:
+                await self.repo.save_hold(updated, expected_version=version)
+            except VersionConflict:
+                continue
+            return updated
+        raise VersionConflict(f"hold of {self.scope}")
 
     async def mark_held(self) -> HoldState:
         """Records when the whole workload first stood still. Later calls keep the first time."""
@@ -179,7 +189,9 @@ class WorkloadCoordinator:
     async def request_redis_route(
         self, workflow_id: str, route: RedisRoute, endpoint: str | None
     ) -> HoldState:
-        """Starts a route change, or returns the one already ordered."""
+        """Only the permanent proxy can be advertised to application processes."""
+        if route is not RedisRoute.PROXY or endpoint is not None:
+            raise ValueError("applications always use the fixed Redis proxy")
         for _ in range(5):
             hold, version = await self.repo.hold(self.scope)
             if hold.redis_route is route and hold.redis_endpoint == endpoint:

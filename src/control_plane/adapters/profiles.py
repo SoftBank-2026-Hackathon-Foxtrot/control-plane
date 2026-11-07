@@ -11,10 +11,12 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from control_plane.adapters.client import MigrationView
-from control_plane.domain.models import ResourceKind, ResourceState, Workflow
+from control_plane.domain.models import Endpoint, ResourceKind, ResourceState, Workflow
 from control_plane.seed import (
     ATOMIC_LOGICAL_PROFILE,
     DMS_PROFILE,
+    MANAGED_LOGICAL_PROFILE,
+    SELF_LOGICAL_PROFILE,
     DatabaseSeed,
     ResourceSeed,
     Timings,
@@ -65,6 +67,11 @@ class ResourceProfile(ABC):
 
     def selected_profile(self, seed: ResourceSeed) -> str:
         return self.profile
+
+    def direct_input_problem(
+        self, seed: ResourceSeed, source: Endpoint, target: Endpoint | None = None
+    ) -> tuple[str, str] | None:
+        return None
 
     def check_before_hold(self, seed: ResourceSeed) -> bool:
         return False
@@ -130,6 +137,33 @@ class DatabaseProfile(ResourceProfile):
         assert isinstance(seed, DatabaseSeed)
         return seed.profile
 
+    def direct_input_problem(
+        self, seed: ResourceSeed, source: Endpoint, target: Endpoint | None = None
+    ) -> tuple[str, str] | None:
+        provider = source.provider or "SELF_MANAGED"
+        if provider == "SELF_MANAGED":
+            profiles: tuple[str, ...] = (SELF_LOGICAL_PROFILE,)
+            target_provider = "SELF_MANAGED"
+        elif provider == "AWS_RDS":
+            profiles = (MANAGED_LOGICAL_PROFILE, ATOMIC_LOGICAL_PROFILE)
+            target_provider = "GCP_CLOUDSQL"
+        else:
+            return (
+                "UNSUPPORTED_PROVIDER_PAIR",
+                "direct database source must be SELF_MANAGED or AWS_RDS",
+            )
+        if target is not None and (target.provider or "SELF_MANAGED") != target_provider:
+            return (
+                "UNSUPPORTED_PROVIDER_PAIR",
+                "supported pairs are SELF_MANAGED to SELF_MANAGED and AWS_RDS to GCP_CLOUDSQL",
+            )
+        if self.selected_profile(seed) not in profiles:
+            return (
+                "PROFILE_CONFIGURATION_REQUIRED",
+                f"configure resources.database.profile for {provider}: {', '.join(profiles)}",
+            )
+        return None
+
     def check_before_hold(self, seed: ResourceSeed) -> bool:
         return self.selected_profile(seed) == ATOMIC_LOGICAL_PROFILE
 
@@ -162,6 +196,7 @@ class RedisProfile(ResourceProfile):
     kind = ResourceKind.REDIS
     resource_id = "redis"
     profile = "redis-proxy-sync-v1"
+    requires_workload_hold = True
 
     def _policy(self, seed: ResourceSeed) -> dict[str, Any]:
         # Its writes stop for under two seconds, so this adapter takes fractions.

@@ -59,6 +59,18 @@ make run
 
 `platform-frontend`의 개발 서버가 `/api`를 `127.0.0.1:8000`으로 전달하므로 그대로 연결됩니다. API 문서는 <http://127.0.0.1:8000/docs>에 있습니다.
 
+### 앱별 고정 프록시 연결
+
+이 저장소는 시드에 등록한 **앱 하나**를 관리합니다. 앱 생성과 배포는 구현하지 않습니다. DB·Redis의 API와 실행기는 각 앱의 고정 프록시 실행기에 함께 있으며, 시드의 `adapters` 또는 `resources.database.adapter`·`resources.redis.adapter`에서 주소와 인증 참조를 선택합니다. 워커 풀과 임시 프록시 전환은 사용하지 않습니다.
+
+앱 기동 전에 `POST /v1/applications/{application}/bindings`에 `{}`를 보내면 시드의 source로 DB·Redis 바인딩을 등록합니다. 직접 입력할 때는 `{"sources":{"DATABASE":{...},"REDIS":{...}}}`를 보냅니다. 바인딩이 준비될 때까지 `GET /v1/applications/{application}/bindings`로 확인합니다. DB 등록은 비동기이므로 첫 응답이 준비 완료를 뜻하지 않습니다. 응답의 `proxy`에는 고정 host·port·database·protocol이 있습니다. 앱 배포기는 이 주소와 앱용 인증 정보를 앱 설정에 넣어야 합니다. 인증 정보의 실제 값은 이 API가 반환하지 않습니다.
+
+`source`와 `target`은 `host`, `port`, `database`, `secretRef` 객체입니다. DB에는 `writerRole`과 선택 항목 `provider`·`providerInstance`가 더 있습니다. DB의 `schema.tables`와 actor 목록은 기존 복제 범위와 업무 정지 검사에 사용합니다. `gateNamespace`를 설정하면 해당 앱의 DB 실행기와 같은 업무 정지 기록을 사용합니다. Redis의 `database`는 현재 엔진 규약에 따라 문자열 `"0"`입니다.
+
+`POST /v1/workflows`는 기존 `sourceEnv`·`targetEnv`에 선택 항목 `resources`를 받습니다. 키는 `DATABASE`·`REDIS`이며 각 값은 `{"source":{...},"target":{...}}`입니다. 첫 작업에서는 시드의 source·target을 사용할 수 있습니다. 다음 작업은 현재 프록시의 활성 저장소를 새 source로 지정합니다. 바인딩은 재사용하고 workflow·migration ID와 요청 기록은 새로 만듭니다. 이전 작업이 미완료이거나 결과 불명이고, 입력 source가 실제 경로와 다르면 시작하지 않습니다.
+
+FINALIZE와 롤백 이후에도 앱은 같은 프록시 주소를 사용합니다. `directWhenIdle: true`는 거절합니다. Redis의 QUIESCE는 검사만 수행하고 CUTOVER가 프록시 쓰기를 재개하므로, DB·Redis 전환 동안의 업무 HOLD는 플랫폼이 유지합니다. 관리형 DB의 `REVERSE_REQUIRED`는 지원하지 않습니다. 기존 전역 작업 직렬화와 Object·Traffic 어댑터는 유지합니다.
+
 ## 검사
 
 ```bash

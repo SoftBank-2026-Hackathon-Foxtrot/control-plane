@@ -29,6 +29,7 @@ from control_plane.api.schemas import (
     EventPage,
     Heartbeat,
     HoldView,
+    InitializeBindings,
     Me,
     PreparationReport,
     ResourceView,
@@ -140,6 +141,24 @@ async def applications(_: CurrentSession, context: Context) -> list[ApplicationV
 
 
 # ---- workflows --------------------------------------------------------------------------------
+@router.post("/v1/applications/{application_id}/bindings")
+async def initialize_bindings(
+    application_id: str, body: InitializeBindings, _: CheckedSession, context: Context
+) -> dict[ResourceKind, dict[str, Any]]:
+    if application_id != context.seed.application:
+        raise ApiError(404, "NOT_FOUND", f"no application {application_id}")
+    return await context.workflows.bindings.initialize(body.sources)
+
+
+@router.get("/v1/applications/{application_id}/bindings")
+async def application_bindings(
+    application_id: str, _: CurrentSession, context: Context
+) -> dict[ResourceKind, dict[str, Any]]:
+    if application_id != context.seed.application:
+        raise ApiError(404, "NOT_FOUND", f"no application {application_id}")
+    return await context.workflows.bindings.list()
+
+
 @router.get("/v1/workflows", response_model_by_alias=True)
 async def list_workflows(_: CurrentSession, context: Context) -> list[Workflow]:
     found = [await context.repo.workflow(i) for i in await context.repo.workflow_ids()]
@@ -159,7 +178,10 @@ async def create_workflow(
 ) -> Response:
     async def execute() -> WorkflowDetail:
         created = await context.workflows.create(
-            source_env=body.source_env, target_env=body.target_env, actor=session.user.login
+            source_env=body.source_env,
+            target_env=body.target_env,
+            actor=session.user.login,
+            resources=body.resources,
         )
         return await _detail(context, created)
 

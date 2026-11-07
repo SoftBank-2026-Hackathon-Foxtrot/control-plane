@@ -8,8 +8,10 @@ from typing import Any
 
 from control_plane.adapters.client import AdapterError, AdapterUnreachable
 from control_plane.adapters.profiles import PROFILES
+from control_plane.bindings import BindingService
 from control_plane.clock import Clock
 from control_plane.domain.models import (
+    EndpointPair,
     Halt,
     ResourceKind,
     RollbackRequest,
@@ -53,8 +55,22 @@ class WorkflowService:
         self.seed = seed
         self.clock = clock
         self.adapters = adapters
+        self.bindings = BindingService(repo, seed, adapters)
 
-    async def create(self, *, source_env: str, target_env: str, actor: str) -> Workflow:
+    async def create(
+        self,
+        *,
+        source_env: str,
+        target_env: str,
+        actor: str,
+        resources: dict[ResourceKind, EndpointPair] | None = None,
+    ) -> Workflow:
+        active = await self.repo.active_workflow_id()
+        if active:
+            raise ApiError(409, "WORKFLOW_ACTIVE", "another migration has not finished", [active])
+        resources = resources or {}
+        if ResourceKind.OBJECT_STORAGE in resources:
+            raise ApiError(422, "UNSUPPORTED_RESOURCE", "object migration keeps its existing refs")
         for env in (source_env, target_env):
             if env not in self.seed.environments:
                 raise ApiError(422, "UNKNOWN_ENVIRONMENT", f"{env} is not in the seed")
@@ -69,6 +85,11 @@ class WorkflowService:
             created_by=actor,
             created_at=self.clock.now(),
         )
+        plans = []
+        for kind in (ResourceKind.DATABASE, ResourceKind.REDIS):
+            plan = await self.bindings.plan(workflow, kind, resources.get(kind))
+            if plan is not None:
+                plans.append(plan)
         try:
             await self.repo.create_workflow(workflow)
         except ActiveWorkflowExists as error:
@@ -80,6 +101,8 @@ class WorkflowService:
             ) from error
         for index, definition in enumerate(PLAN):
             await self.repo.save_stage(workflow.id, StageState(index=index, kind=definition.kind))
+        for plan in plans:
+            await self.repo.save_resource(workflow.id, plan)
         await self._event(workflow, "WORKFLOW_CREATED", actor, f"{source_env} to {target_env}")
         saved = await self.repo.workflow(workflow.id)
         assert saved is not None

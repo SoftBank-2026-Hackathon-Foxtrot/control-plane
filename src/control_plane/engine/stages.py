@@ -17,7 +17,6 @@ from control_plane.domain.stages import ALLOWED_ROUTES_BEFORE, CUTOVER_RESOURCE
 from control_plane.engine.commands import Command, CommandRunner, expected_after
 from control_plane.engine.context import Outcome, Passed, StageContext, Stop, Wait
 from control_plane.engine.evidence import WorkloadNotHeld, business_probes
-from control_plane.engine.redisroute import enter_proxy, leave_proxy
 from control_plane.engine.traffic_observation import set_traffic
 from control_plane.engine.transition import held_command, hold_workload, release_workload
 from control_plane.probes import p95
@@ -58,11 +57,6 @@ class Prepare:
                     return Stop("APP_NOT_READY", f"{env.app_url} does not answer /readyz")
                 return Wait(f"waiting for {env.app_url}")
         ctx.reset_timer("apps_ready")
-        # Before any plan: the Redis adapter's PREPARE refuses a source reached directly.
-        entered = await enter_proxy(ctx)
-        if not isinstance(entered, Passed):
-            return entered
-
         for kind in CUTOVER_ORDER:
             registered = await self._register(ctx, kind)
             if not isinstance(registered, Passed):
@@ -93,6 +87,7 @@ class Prepare:
         seed = ctx.seed.resources.database
         catalog = seed.catalog
         assert catalog is not None
+        assert seed.source_ref is not None and seed.target_ref is not None
         if not ctx.stage.data.get("catalog_published"):
             await ctx.services.gate.publish_catalog(
                 databases=catalog.databases,
@@ -152,13 +147,25 @@ class Prepare:
         if resource.migration_id:
             return Passed()
         profile = PROFILES[kind]
-        body = profile.plan_body(
+        body = resource.plan or profile.plan_body(
             ctx.workflow, ctx.seed.resources.of(kind), resource, ctx.seed.scope
         )
         try:
             view = await ctx.client(kind).create_migration(f"{ctx.workflow.id}:{kind.value}", body)
         except AdapterError as error:
             return Stop(error.code, error.message, error.blockers, resource=kind)
+        if resource.plan is not None:
+            binding = await ctx.services.repo.application_binding(ctx.workflow.application, kind)
+            if binding is None:
+                return Stop(
+                    "BINDING_MISSING", "the fixed application binding disappeared", resource=kind
+                )
+            await ctx.services.repo.save_application_binding(
+                ctx.workflow.application,
+                kind,
+                binding,
+                migration_id=view.migration_id,
+            )
         await ctx.services.repo.save_resource(
             ctx.workflow.id, resource.model_copy(update={"migration_id": view.migration_id})
         )
@@ -435,8 +442,7 @@ class Finalize:
         ]
         if wrong:
             return Stop("ROUTE_MISMATCH", "a finalized resource is not on the target", wrong)
-        # The way back is gone, so the proxy is no longer needed in front of the target.
-        return await leave_proxy(ctx, ctx.workflow.target_env)
+        return Passed()
 
 
 def build_handlers(

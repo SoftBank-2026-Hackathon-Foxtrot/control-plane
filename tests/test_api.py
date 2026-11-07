@@ -474,7 +474,7 @@ async def test_heartbeat_needs_the_workload_token_and_known_names(console: Conso
         "generation": 0,
         "objectMigrationId": None,
         "pollAfterMs": 5000,
-        "redisRoute": "DIRECT",
+        "redisRoute": "PROXY",
         "redisEndpoint": None,
         "redisRouteGeneration": 0,
     }
