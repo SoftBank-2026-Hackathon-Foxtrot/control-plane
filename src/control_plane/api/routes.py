@@ -35,6 +35,7 @@ from control_plane.api.schemas import (
     Workspace,
     allowed_commands,
 )
+from control_plane.applications import ApplicationService
 from control_plane.domain.models import ResourceKind, ResourceState, Session, Workflow
 from control_plane.errors import ApiError
 from control_plane.workflows import CommandInput
@@ -119,9 +120,10 @@ async def workspaces(session: CurrentSession) -> list[Workspace]:
 
 # ---- what is managed -------------------------------------------------------------------------
 @router.get("/v1/applications", response_model_by_alias=True)
-async def applications(session: CurrentSession, context: Context) -> list[ApplicationView]:
+async def applications(session: CurrentSession, context: Context) -> list[Any]:
+    registered = await ApplicationService(context.repo, context.clock).list(session.user.id)
     if not _owns_seed(context, session):
-        return []
+        return registered
     seed = context.seed
     return [
         ApplicationView(
@@ -132,7 +134,8 @@ async def applications(session: CurrentSession, context: Context) -> list[Applic
                 for name, env in seed.environments.items()
             ],
             resources=list(ResourceKind),
-        )
+        ),
+        *registered,
     ]
 
 

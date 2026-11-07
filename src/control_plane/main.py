@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from control_plane.adapters.client import AdapterClient
+from control_plane.api.applications import router as application_router
 from control_plane.api.dependencies import ApiContext
 from control_plane.api.routes import router
 from control_plane.auth import AuthService
@@ -195,6 +196,7 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     )
     app.state.context = platform.context
     app.include_router(router)
+    app.include_router(application_router)
 
     @app.exception_handler(ApiError)
     async def api_error(_: Request, error: ApiError) -> JSONResponse:
