@@ -9,11 +9,19 @@ from typing import Any
 
 from control_plane.adapters.client import AdapterError, AdapterUnreachable
 from control_plane.api.dependencies import ApiContext
-from control_plane.api.schemas import ResourceView
+from control_plane.api.schemas import ObservedResourceView
 from control_plane.domain.models import ResourceState, Workflow, WorkflowStatus
+from control_plane.telemetry_contract import STATUS, fields, project
 
 MAX_AGE_SECONDS = 15
 READ_TIMEOUT_SECONDS = 2
+PUBLIC_STATUS = deepcopy(STATUS)
+PUBLIC_STATUS["streams"] = [
+    fields("channel state direction freshness observedAt copied backlog lagMs")
+]
+for _part in ("sync", "proxy"):
+    PUBLIC_STATUS["details"]["redis"][_part]["freshness"] = True
+PUBLIC_STATUS["details"]["object"].update(fields("expectedApps syncFreshness"))
 
 
 def _mapping(value: Any) -> dict[str, Any]:
@@ -54,8 +62,8 @@ def project_resource(
     collected_at: datetime | None = None,
     collection_error: str | None = None,
     historical: bool = False,
-) -> ResourceView:
-    status = deepcopy(state.last_status or {}) if raw is None else deepcopy(raw)
+) -> ObservedResourceView:
+    status = project(state.last_status or {} if raw is None else raw, PUBLIC_STATUS)
     observed = _mapping(status.get("observed"))
     collected_at = collected_at or state.last_status_at
     observed_at = observed.get("observedAt")
@@ -123,10 +131,16 @@ def project_resource(
         result = _mapping(check.get("decision")).get("result", "UNKNOWN")
         expires = _timestamp(check.get("validUntil"))
         check["currentResult"] = (
-            result if freshness == "FRESH" and expires is not None and expires > now else "UNKNOWN"
+            result
+            if freshness == "FRESH"
+            and expires is not None
+            and expires > now
+            and check.get("transitionId") == status.get("transitionId")
+            and check.get("topologyRevision") == status.get("topologyRevision")
+            else "UNKNOWN"
         )
         checks.append(check)
-    return ResourceView(
+    return ObservedResourceView(
         kind=state.kind,
         migration_id=state.migration_id,
         lifecycle=status.get("lifecycle"),
@@ -158,7 +172,7 @@ def project_resource(
 
 async def read_resource(
     context: ApiContext, workflow: Workflow, state: ResourceState
-) -> ResourceView:
+) -> ObservedResourceView:
     now = context.clock.now()
     if workflow.status in {WorkflowStatus.COMPLETED, WorkflowStatus.ABORTED}:
         return project_resource(state, now=now, historical=True)
@@ -167,6 +181,11 @@ async def read_resource(
     try:
         async with asyncio.timeout(READ_TIMEOUT_SECONDS):
             view = await context.workflows.adapters[state.kind].migration(state.migration_id)
+        if (
+            view.raw.get("migrationId") != state.migration_id
+            or view.raw.get("workflowId", workflow.id) != workflow.id
+        ):
+            raise AdapterError(502, "OBSERVATION_MISMATCH", "another migration was reported", [])
         return project_resource(state, now=now, raw=view.raw, collected_at=now)
     except (AdapterError, AdapterUnreachable, TimeoutError):
         # Do not expose URLs, tokens or response bodies through connection error strings.

@@ -6,7 +6,7 @@ The browser calls `/api/...`; the gateway, or Vite in development, removes the p
 from __future__ import annotations
 
 import asyncio
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import RedirectResponse
@@ -30,13 +30,14 @@ from control_plane.api.schemas import (
     Heartbeat,
     HoldView,
     Me,
+    ResourceView,
     StageView,
     WorkflowCommand,
     WorkflowDetail,
     Workspace,
     allowed_commands,
 )
-from control_plane.domain.models import ResourceKind, Workflow
+from control_plane.domain.models import ResourceKind, ResourceState, Workflow
 from control_plane.errors import ApiError
 from control_plane.workflows import CommandInput
 
@@ -172,7 +173,19 @@ async def create_workflow(
 
 @router.get("/v1/workflows/{workflow_id}", response_model_by_alias=True)
 async def get_workflow(workflow_id: str, _: CurrentSession, context: Context) -> WorkflowDetail:
-    return await _detail(context, await _workflow(context, workflow_id))
+    workflow = await _workflow(context, workflow_id)
+    detail = await _detail(context, workflow)
+    # Newer release branches already collect and project observations independently (including
+    # OTEL). Preserve that pipeline rather than overwriting it with direct polling.
+    if "observation" in ResourceView.model_fields:
+        return detail
+    resources = await asyncio.gather(
+        *(
+            read_resource(context, workflow, state)
+            for state in await context.repo.resources(workflow.id)
+        )
+    )
+    return detail.model_copy(update={"resources": list(resources)})
 
 
 @router.get("/v1/workflows/{workflow_id}/events", response_model_by_alias=True)
@@ -281,14 +294,7 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
         workflow=workflow,
         allowed_commands=allowed_commands(workflow),
         stages=[StageView.of(stage) for stage in await repo.stages(workflow.id)],
-        resources=list(
-            await asyncio.gather(
-                *(
-                    read_resource(context, workflow, state)
-                    for state in await repo.resources(workflow.id)
-                )
-            )
-        ),
+        resources=[_resource(state) for state in await repo.resources(workflow.id)],
         traffic=await repo.traffic_records(workflow.id),
         hold=HoldView(
             desired=hold.desired,
@@ -309,4 +315,19 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
             redis_endpoint=hold.redis_endpoint,
             redis_route_generation=hold.redis_route_generation,
         ),
+    )
+
+
+def _resource(state: ResourceState) -> ResourceView:
+    status: dict[str, Any] = state.last_status or {}
+    return ResourceView(
+        kind=state.kind,
+        migration_id=state.migration_id,
+        lifecycle=status.get("lifecycle"),
+        health=status.get("health"),
+        route=state.last_route,
+        phase=status.get("phase"),
+        target_writes_possible=state.target_writes_possible,
+        readiness=status.get("readiness"),
+        observed_at=state.last_status_at,
     )
