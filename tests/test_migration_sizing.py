@@ -169,7 +169,6 @@ async def test_prepare_resizes_once_across_restart_and_waits_for_app_ready(
     await console.login()
     chosen = await selection(console)
     workflow_id = await plan(console, chosen)
-    await console.world.approve(workflow_id)
     await console.world.tick()
     assert not console.world.db.migrations and not console.world.db.bindings
     stage = await console.world.repo.stage(workflow_id, 0)
@@ -215,7 +214,6 @@ async def test_failed_or_serving_target_never_starts_cdc(
         await console.world.repo.save_resource(
             workflow_id, resource.model_copy(update={"binding_ref": identifier})
         )
-    await console.world.approve(workflow_id)
     await console.world.tick()
     drain(target)
     await console.world.tick()

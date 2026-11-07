@@ -454,7 +454,7 @@ class Finalize:
                     "FINALIZE",
                     expected=expected_after("FINALIZE"),
                     # The adapters have no waiting period of their own: FINALIZE goes when this
-                    # stage is approved. Their remaining checks may still take a moment.
+                    # completion decision is made. Remaining safety checks may take a moment.
                     not_allowed_timeout=ctx.seed.timings.finalize_timeout,
                 ),
             )

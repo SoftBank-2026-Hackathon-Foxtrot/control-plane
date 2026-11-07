@@ -37,6 +37,7 @@ PROBED_WHILE = frozenset(
         WorkflowStatus.ROLLING_BACK,
         WorkflowStatus.HALTED,
         WorkflowStatus.WAITING_APPROVAL,
+        WorkflowStatus.CUTOVER_COMPLETE,
     }
 )
 """Whenever a person may be deciding. The DB adapter also needs this evidence to stay fresh."""

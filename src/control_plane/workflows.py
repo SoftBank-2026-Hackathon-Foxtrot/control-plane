@@ -16,12 +16,13 @@ from control_plane.domain.models import (
     PreparedTargetConfiguration,
     ResourceKind,
     RollbackRequest,
+    StageKind,
     StageState,
     Workflow,
     WorkflowEvent,
     WorkflowStatus,
 )
-from control_plane.domain.stages import PLAN
+from control_plane.domain.stages import CUTOVER_ORDER, PLAN
 from control_plane.errors import ApiError
 from control_plane.seed import Seed
 from control_plane.store.repository import ActiveWorkflowExists, Repository
@@ -30,15 +31,31 @@ from control_plane.store.table import VersionConflict
 Clients = dict[ResourceKind, Any]
 
 ALLOWED_COMMANDS: dict[WorkflowStatus, tuple[str, ...]] = {
-    WorkflowStatus.PLANNED: ("APPROVE", "ABORT"),
+    WorkflowStatus.PLANNED: ("RESUME", "ABORT"),
     WorkflowStatus.RUNNING: ("HALT",),
     WorkflowStatus.WAITING_APPROVAL: ("APPROVE", "ABORT"),
+    WorkflowStatus.CUTOVER_COMPLETE: ("ROLLBACK", "FINALIZE"),
     WorkflowStatus.HALTED: ("RESUME", "RECONCILE", "ROLLBACK_RESOURCE", "ABORT"),
     WorkflowStatus.ROLLING_BACK: (),
     WorkflowStatus.ABORTING: (),
     WorkflowStatus.COMPLETED: (),
     WorkflowStatus.ABORTED: (),
+    WorkflowStatus.ROLLED_BACK: (),
 }
+
+
+def commands_for(workflow: Workflow) -> tuple[str, ...]:
+    if workflow.status is WorkflowStatus.HALTED and workflow.rollback_all:
+        return ("ROLLBACK", "RECONCILE")
+    if workflow.status is WorkflowStatus.WAITING_APPROVAL:
+        # Legacy plans are normalized by the engine. Never label a finalization choice as
+        # another cutover approval while a client reads the state between ticks.
+        stage = PLAN[workflow.current_stage].kind
+        if stage is StageKind.PREPARE:
+            return ("HALT",)
+        if stage is StageKind.FINALIZE:
+            return ("ROLLBACK", "FINALIZE")
+    return ALLOWED_COMMANDS[workflow.status]
 
 
 @dataclass(frozen=True)
@@ -96,7 +113,11 @@ class WorkflowService:
             if plan is not None:
                 plans.append(plan)
         try:
-            await self.repo.create_workflow(workflow)
+            await self.repo.create_workflow(
+                workflow,
+                stages=(StageState(index=i, kind=stage.kind) for i, stage in enumerate(PLAN)),
+                resources=plans,
+            )
         except ActiveWorkflowExists as error:
             raise ApiError(
                 409,
@@ -104,10 +125,6 @@ class WorkflowService:
                 "another migration has not finished",
                 [error.workflow_id],
             ) from error
-        for index, definition in enumerate(PLAN):
-            await self.repo.save_stage(workflow.id, StageState(index=index, kind=definition.kind))
-        for plan in plans:
-            await self.repo.save_resource(workflow.id, plan)
         await self._event(workflow, "WORKFLOW_CREATED", actor, f"{source_env} to {target_env}")
         saved = await self.repo.workflow(workflow.id)
         assert saved is not None
@@ -154,12 +171,12 @@ class WorkflowService:
             raise ApiError(
                 409, "VERSION_CONFLICT", f"the workflow is at version {workflow.version}"
             )
-        if command.command not in ALLOWED_COMMANDS[workflow.status]:
+        if command.command not in commands_for(workflow):
             raise ApiError(
                 409,
                 "INVALID_STATE",
                 f"{command.command} is not allowed while {workflow.status.value}",
-                list(ALLOWED_COMMANDS[workflow.status]),
+                list(commands_for(workflow)),
             )
         if command.resource is not None and command.resource not in self.seed.managed:
             raise ApiError(
@@ -185,6 +202,37 @@ class WorkflowService:
             update={
                 "status": WorkflowStatus.RUNNING,
                 "approved_through": workflow.current_stage,
+                "retry_epoch": workflow.retry_epoch + 1,
+            }
+        )
+
+    @staticmethod
+    def _finalize(workflow: Workflow, _: CommandInput, __: str) -> Workflow:
+        return workflow.model_copy(
+            update={
+                "status": WorkflowStatus.RUNNING,
+                "finalize_requested": True,
+                "retry_epoch": workflow.retry_epoch + 1,
+            }
+        )
+
+    def _rollback(self, workflow: Workflow, _: CommandInput, actor: str) -> Workflow:
+        if workflow.reconcile_requested:
+            raise ApiError(409, "RECONCILE_RUNNING", "wait for the reconcile to finish")
+        pending = [
+            kind
+            for kind in reversed(CUTOVER_ORDER)
+            if kind in self.seed.managed and kind not in workflow.rolled_back
+        ]
+        return workflow.model_copy(
+            update={
+                "status": WorkflowStatus.ROLLING_BACK,
+                "rollback_all": True,
+                "rollback": RollbackRequest(resource=pending[0], requested_by=actor)
+                if pending
+                else None,
+                "halt": None,
+                "retry_epoch": workflow.retry_epoch + 1,
             }
         )
 

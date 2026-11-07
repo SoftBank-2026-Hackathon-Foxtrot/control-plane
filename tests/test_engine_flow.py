@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from control_plane.domain.models import (
     ActorState,
     HoldDesired,
@@ -58,36 +60,92 @@ async def test_cutover_never_overlaps(world: World) -> None:
     assert world.db.only.lifecycle == "READY"
 
 
-async def test_each_stage_that_cannot_be_undone_waits_for_a_person(world: World) -> None:
+async def test_only_cutover_waits_for_approval_and_completion_is_a_separate_decision(
+    world: World,
+) -> None:
     workflow = await world.start()
-    assert (await world.workflow(workflow.id)).status is WorkflowStatus.PLANNED
-    for _ in range(5):
+    assert workflow.status is WorkflowStatus.RUNNING
+    stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
+    assert stopped.current_stage == 2
+    for kind in ResourceKind:
+        assert actions(world, kind) == ["PREPARE", "START_SYNC"]
+    assert world.traffic.current == 0
+    assert (await world.services.coordinator.hold()).desired is HoldDesired.RUN
+    for _ in range(10):
         await world.tick()
-    assert not world.db.received, "nothing runs before the first approval"
-
     await world.approve(workflow.id)
-    stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
-    assert stopped.current_stage == REDIS_STAGE, "one approval starts the Redis and DB cutovers"
-    assert "QUIESCE" not in actions(world, ResourceKind.REDIS)
-    assert "QUIESCE" not in actions(world, ResourceKind.DATABASE)
+    stopped = await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
+    assert stopped.current_stage == FINALIZE_STAGE
+    assert world.traffic.current == 100
+    for _ in range(120):
+        await world.tick()
+    assert (await world.workflow(workflow.id)).status is WorkflowStatus.CUTOVER_COMPLETE
+    assert (await world.event_types(workflow.id)).count("APPROVAL_REQUIRED") == 1
+    assert all("FINALIZE" not in actions(world, kind) for kind in ResourceKind)
+    await world.command(workflow.id, "FINALIZE")
+    assert (await world.run_to_end(workflow.id)).status is WorkflowStatus.COMPLETED
 
+
+@pytest.mark.parametrize("status", [WorkflowStatus.RUNNING, WorkflowStatus.WAITING_APPROVAL])
+async def test_legacy_finalization_approval_is_not_reopened(
+    world: World, status: WorkflowStatus
+) -> None:
+    workflow = await world.start()
+    await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
     await world.approve(workflow.id)
-    stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
-    assert stopped.current_stage == FINALIZE_STAGE, "FINALIZE removes the way back"
-    assert "FINALIZE" not in actions(world, ResourceKind.REDIS)
+    current = await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
+    await world.repo.save_workflow(
+        current.model_copy(
+            update={
+                "status": status,
+                "approved_through": FINALIZE_STAGE
+                if status is WorkflowStatus.RUNNING
+                else REDIS_STAGE,
+                "cutover_completed_at": None,
+                "finalize_requested": False,
+            }
+        )
+    )
+    if status is WorkflowStatus.WAITING_APPROVAL:
+        await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
+        assert all("FINALIZE" not in actions(world, kind) for kind in ResourceKind)
+        await world.command(workflow.id, "FINALIZE")
+    final = await world.until(
+        workflow.id,
+        WorkflowStatus.COMPLETED,
+        WorkflowStatus.CUTOVER_COMPLETE,
+        WorkflowStatus.HALTED,
+    )
+    assert final.status is WorkflowStatus.COMPLETED
+    expected_decisions = 2 if status is WorkflowStatus.WAITING_APPROVAL else 1
+    assert (await world.event_types(workflow.id)).count("CUTOVER_COMPLETED") == expected_decisions
+
+
+@pytest.mark.parametrize("status", [WorkflowStatus.PLANNED, WorkflowStatus.WAITING_APPROVAL])
+async def test_legacy_prepare_starts_without_an_approval(
+    world: World, status: WorkflowStatus
+) -> None:
+    workflow = await world.start()
+    await world.repo.save_workflow(workflow.model_copy(update={"status": status}))
+    stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL, stage=2)
+    assert stopped.current_stage == 2
+    assert (await world.event_types(workflow.id)).count("APPROVAL_REQUIRED") == 1
+    for kind in ResourceKind:
+        assert actions(world, kind) == ["PREPARE", "START_SYNC"]
 
 
 async def test_database_and_redis_cutovers_stop_the_workload(world: World) -> None:
     workflow = await world.start()
     held_during: set[int] = set()
 
-    await world.approve(workflow.id)
     for _ in range(3000):
         current = await world.workflow(workflow.id)
         if current.status.terminal:
             break
         if current.status is WorkflowStatus.WAITING_APPROVAL:
             await world.approve(workflow.id)
+        elif current.status is WorkflowStatus.CUTOVER_COMPLETE:
+            await world.command(workflow.id, "FINALIZE")
         await world.tick()
         hold = await world.services.coordinator.hold()
         if hold.desired is HoldDesired.HOLD:
@@ -129,6 +187,8 @@ async def test_the_object_plan_reaches_the_application(world: World) -> None:
 async def test_stability_window_restarts_when_a_probe_fails(world: World) -> None:
     workflow = await world.start()
     await world.at_stage(workflow.id, 2)
+    await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
+    await world.approve(workflow.id)
     moved_at = None
     # Fail probes as soon as the object adapter is active; recovery must restart the window.
     for _ in range(400):

@@ -65,6 +65,60 @@ class Rollback:
             ctx.stage.data.pop("rollback", None)
         return outcome
 
+    async def finish_all(self, ctx: StageContext) -> Outcome:
+        """Restore app traffic only after every data resource proves it is back on the source."""
+        data = ctx.stage.data.setdefault("full_rollback", {})
+        for kind in ctx.seed.managed:
+            view = await ctx.view(kind, fresh=True)
+            if (
+                view.route != "SOURCE"
+                or view.health != "OK"
+                or (view.active_operation_id and not data.get("cleanup_started"))
+            ):
+                return Stop(
+                    "ROLLBACK_ROUTE_UNCONFIRMED",
+                    f"{kind.value} has not confirmed a healthy source route",
+                    resource=kind,
+                )
+        if not data.get("traffic_restored_at"):
+            if not await ctx.services.prober.is_ready(ctx.source_env.app_url):
+                return Stop("SOURCE_APP_NOT_READY", "source application does not answer /readyz")
+            try:
+                await set_traffic(ctx, 0, "ROLLBACK")
+            except TrafficError as error:
+                return Stop("TRAFFIC_REVERT_FAILED", str(error))
+            data["traffic_restored_at"] = ctx.now.isoformat()
+            await ctx.emit("TRAFFIC_CHANGED", "target 0%: all resources restored")
+            return Wait("source traffic restored; verifying application")
+        probes, _ = await business_probes(ctx, datetime.fromisoformat(data["traffic_restored_at"]))
+        if probes.ok:
+            data["cleanup_started"] = True
+            for kind in ctx.seed.managed:
+                outcome = await self.runner.run(
+                    ctx,
+                    Command(
+                        kind,
+                        "FINALIZE",
+                        slot="ROLLBACK_FINALIZE",
+                        expected=expected_after("FINALIZE"),
+                        not_allowed_timeout=ctx.seed.timings.finalize_timeout,
+                    ),
+                )
+                if not isinstance(outcome, Passed):
+                    return outcome
+            for kind in ctx.seed.managed:
+                view = await ctx.view(kind, fresh=True)
+                if view.route != "SOURCE" or view.health != "OK":
+                    return Stop(
+                        "ROLLBACK_ROUTE_UNCONFIRMED",
+                        "source route changed during cleanup",
+                        resource=kind,
+                    )
+            return Passed()
+        if ctx.elapsed("full_rollback_verify") > ctx.seed.timings.advance_timeout:
+            return Stop("ROLLBACK_NOT_VERIFIED", probes.reason)
+        return Wait(probes.reason)
+
     async def _check(self, ctx: StageContext, kind: ResourceKind, data: dict[str, Any]) -> Outcome:
         assert ctx.workflow.rollback is not None
         if (await ctx.resource(kind)).migration_id is None:

@@ -10,7 +10,7 @@ from typing import Any
 from control_plane.adapters.client import AdapterError, AdapterUnreachable
 from control_plane.api.dependencies import ApiContext
 from control_plane.api.schemas import ObservedResourceView, ResourceView
-from control_plane.domain.models import ResourceState, Workflow, WorkflowStatus
+from control_plane.domain.models import ResourceState, Workflow
 from control_plane.telemetry_contract import STATUS, fields, project
 
 MAX_AGE_SECONDS = 15
@@ -176,7 +176,7 @@ async def read_resource(
     context: ApiContext, workflow: Workflow, state: ResourceState
 ) -> ObservedResourceView:
     now = context.clock.now()
-    if workflow.status in {WorkflowStatus.COMPLETED, WorkflowStatus.ABORTED}:
+    if workflow.status.terminal:
         return project_resource(state, now=now, historical=True)
     if state.migration_id is None:
         return project_resource(state, now=now)
@@ -226,7 +226,7 @@ def enrich_observed(
         now=now,
         raw=raw,
         collection_error=error,
-        historical=workflow.status in {WorkflowStatus.COMPLETED, WorkflowStatus.ABORTED},
+        historical=workflow.status.terminal,
     )
     replication = (projected.replication or {}) | _present(_mapping(payload.get("replication")))
     return ObservedResourceView.model_validate(

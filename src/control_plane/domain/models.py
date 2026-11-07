@@ -59,15 +59,21 @@ class WorkflowStatus(StrEnum):
     PLANNED = "PLANNED"
     RUNNING = "RUNNING"
     WAITING_APPROVAL = "WAITING_APPROVAL"
+    CUTOVER_COMPLETE = "CUTOVER_COMPLETE"
     HALTED = "HALTED"
     ROLLING_BACK = "ROLLING_BACK"
     ABORTING = "ABORTING"
     COMPLETED = "COMPLETED"
     ABORTED = "ABORTED"
+    ROLLED_BACK = "ROLLED_BACK"
 
     @property
     def terminal(self) -> bool:
-        return self in {WorkflowStatus.COMPLETED, WorkflowStatus.ABORTED}
+        return self in {
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.ABORTED,
+            WorkflowStatus.ROLLED_BACK,
+        }
 
 
 class StageKind(StrEnum):
@@ -129,7 +135,7 @@ class Workflow(Model):
     application: str
     source_env: str
     target_env: str
-    status: WorkflowStatus = WorkflowStatus.PLANNED
+    status: WorkflowStatus = WorkflowStatus.RUNNING
     current_stage: int = 0
     approved_through: int = -1
     version: int = 0
@@ -140,6 +146,9 @@ class Workflow(Model):
     created_by_id: SkipJsonSchema[str | None] = Field(default=None, exclude=True)
     created_at: datetime
     finished_at: datetime | None = None
+    cutover_completed_at: datetime | None = None
+    finalize_requested: bool = False
+    rollback_all: bool = False
     halt: Halt | None = None
     rollback: RollbackRequest | None = None
     reconcile_requested: bool = False

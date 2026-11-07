@@ -2,12 +2,82 @@
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 from control_plane.domain.models import ResourceKind, WorkflowStatus
 from control_plane.errors import ApiError
-from tests.conftest import DB_STAGE, REDIS_STAGE, TRAFFIC_STAGE, World
+from tests.conftest import DB_STAGE, REDIS_STAGE, SEED, TRAFFIC_STAGE, World
 from tests.fakes import Fault
+
+
+async def cutover_with_reverse_replication() -> tuple[World, str]:
+    seed = copy.deepcopy(SEED)
+    seed["resources"]["database"]["policy"]["rollbackMode"] = "REVERSE_REQUIRED"
+    world = World(seed=seed)
+    world.db.reverse_supported = True
+    workflow = await world.start()
+    await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
+    await world.approve(workflow.id)
+    await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
+    return world, workflow.id
+
+
+async def test_full_rollback_restores_data_before_app_traffic_and_survives_restarts() -> None:
+    world, workflow_id = await cutover_with_reverse_replication()
+    world.restart_engine_every_tick = True
+    await world.command(workflow_id, "ROLLBACK")
+    final = await world.until(workflow_id, WorkflowStatus.ROLLED_BACK, WorkflowStatus.HALTED)
+    assert final.status is WorkflowStatus.ROLLED_BACK, final.halt
+    assert final.rolled_back == [
+        ResourceKind.DATABASE,
+        ResourceKind.REDIS,
+        ResourceKind.OBJECT_STORAGE,
+    ]
+    assert world.traffic.current == 0
+    assert await world.repo.active_workflow_id() is None
+    assert all(adapter.only.lifecycle == "COMPLETED" for adapter in world.adapters.values())
+    for adapter in world.adapters.values():
+        assert adapter.executed["ROLLBACK"] == 1
+        assert adapter.executed["FINALIZE"] == 1
+    events = (await world.repo.events(workflow_id, limit=5000))[0]
+    restored = [e.resource for e in events if e.type == "RESOURCE_ROLLED_BACK"]
+    assert restored == final.rolled_back
+    rollback_traffic = next(i for i, e in enumerate(events) if e.message.startswith("target 0%"))
+    assert all(
+        i < rollback_traffic for i, e in enumerate(events) if e.type == "RESOURCE_ROLLED_BACK"
+    )
+
+
+async def test_full_rollback_failure_stops_before_the_next_resource_and_can_retry() -> None:
+    world, workflow_id = await cutover_with_reverse_replication()
+    world.db.faults["ROLLBACK"] = Fault("FAILED")
+    await world.command(workflow_id, "ROLLBACK")
+    stopped = await world.until(workflow_id, WorkflowStatus.HALTED)
+    assert stopped.rollback_all
+    assert "ROLLBACK" not in [body["action"] for body in world.redis.received]
+    assert world.traffic.current == 100
+    for _ in range(100):
+        if not (await world.workflow(workflow_id)).reconcile_requested:
+            break
+        await world.tick()
+    await world.command(workflow_id, "ROLLBACK")
+    final = await world.until(workflow_id, WorkflowStatus.ROLLED_BACK, WorkflowStatus.HALTED)
+    assert final.status is WorkflowStatus.ROLLED_BACK, final.halt
+
+
+async def test_full_rollback_refuses_a_database_without_reverse_replication(world: World) -> None:
+    workflow = await world.start()
+    await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
+    await world.approve(workflow.id)
+    await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
+    await world.command(workflow.id, "ROLLBACK")
+    stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
+    assert stopped.halt is not None and stopped.halt.code == "ROLLBACK_UNAVAILABLE"
+    assert not stopped.rolled_back
+    assert world.traffic.current == 100
+    assert "ROLLBACK" not in [body["action"] for body in world.redis.received]
 
 
 async def stop_after_object_moved(world: World) -> str:
@@ -204,7 +274,8 @@ async def test_abort_refuses_to_walk_away_from_a_paused_database(world: World) -
 
 async def test_abort_returns_users_to_the_source_if_the_data_is_there(world: World) -> None:
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
+    await world.at_stage(workflow.id, REDIS_STAGE)
+    await world.command(workflow.id, "HALT")
     assert world.traffic.current == 5
     await world.command(workflow.id, "ABORT")
     await world.until(workflow.id, WorkflowStatus.ABORTED)

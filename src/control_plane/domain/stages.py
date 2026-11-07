@@ -14,19 +14,16 @@ class StageDefinition:
 
 
 PLAN: tuple[StageDefinition, ...] = (
-    StageDefinition(StageKind.PREPARE, requires_approval=True),
+    StageDefinition(StageKind.PREPARE),
     StageDefinition(StageKind.SYNC),
-    StageDefinition(StageKind.OBJECT_CUTOVER),
+    StageDefinition(StageKind.OBJECT_CUTOVER, requires_approval=True),
     StageDefinition(StageKind.CANARY),
-    # One approval starts Redis and then the DB. Target writes to the DB cannot be undone with the
-    # DMS profile, so a person decides before either moves. Redis goes first: it can still go back,
-    # and if it fails the DB is untouched and everything returns to the source. Asking again
-    # between the two would leave the stores split across clouds while a person is away.
-    StageDefinition(StageKind.REDIS_CUTOVER, requires_approval=True),
+    # One approval, after SYNC and before any route or traffic change, covers every cutover.
+    StageDefinition(StageKind.REDIS_CUTOVER),
     StageDefinition(StageKind.DATABASE_CUTOVER),
     StageDefinition(StageKind.TRAFFIC),
-    # FINALIZE removes the way back.
-    StageDefinition(StageKind.FINALIZE, requires_approval=True),
+    # This runs only after the separate FINALIZE decision at CUTOVER_COMPLETE.
+    StageDefinition(StageKind.FINALIZE),
 )
 
 CUTOVER_RESOURCE: dict[StageKind, ResourceKind] = {
@@ -53,8 +50,8 @@ def requires_approval(index: int, managed: frozenset[ResourceKind]) -> bool:
     """Whether the stage at `index` waits for a person.
 
     An approval asked at a skipped stage moves to the next stage that runs, so leaving a resource
-    out never removes a decision: without Redis, the approval before the store cutovers is asked
-    at the DB cutover instead.
+    out never removes the decision. Without object storage, CANARY waits instead: even the
+    first traffic change must happen only after cutover approval.
     """
     if PLAN[index].requires_approval:
         return True

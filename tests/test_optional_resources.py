@@ -13,7 +13,7 @@ from control_plane.domain.models import ResourceKind, StageKind, StageStatus, Wo
 from control_plane.domain.stages import PLAN, requires_approval
 from control_plane.errors import ApiError
 from control_plane.seed import Seed
-from tests.conftest import DB_STAGE, FINALIZE_STAGE, REDIS_STAGE, SEED, World
+from tests.conftest import FINALIZE_STAGE, SEED, World
 
 
 def without(*names: str, adapters: bool = True) -> dict[str, Any]:
@@ -51,16 +51,17 @@ def test_a_seed_needs_a_resource_and_an_adapter_for_each() -> None:
     assert Seed.model_validate(without("database", adapters=False)).managed
 
 
-def test_an_approval_at_a_skipped_stage_moves_to_the_next_one() -> None:
+def test_one_cutover_approval_always_precedes_the_first_route_or_traffic_change() -> None:
     every = frozenset(ResourceKind)
-    no_redis = every - {ResourceKind.REDIS}
-    no_stores = frozenset({ResourceKind.OBJECT_STORAGE})
-    assert requires_approval(REDIS_STAGE, every)
-    assert not requires_approval(DB_STAGE, every)
-    assert requires_approval(DB_STAGE, no_redis), "the store approval is asked at the DB instead"
-    traffic = next(i for i, stage in enumerate(PLAN) if stage.kind is StageKind.TRAFFIC)
-    assert requires_approval(traffic, no_stores), "and at traffic when neither store is there"
-    assert requires_approval(FINALIZE_STAGE, no_stores)
+    for managed in (every, every - {ResourceKind.REDIS}, frozenset({ResourceKind.DATABASE})):
+        executed = [
+            index
+            for index, stage in enumerate(PLAN)
+            if stage.kind is not StageKind.OBJECT_CUTOVER or ResourceKind.OBJECT_STORAGE in managed
+        ]
+        gates = [index for index in executed if requires_approval(index, managed)]
+        assert gates == [2 if ResourceKind.OBJECT_STORAGE in managed else 3]
+        assert not requires_approval(FINALIZE_STAGE, managed)
 
 
 async def test_a_migration_without_a_database_completes() -> None:
@@ -90,15 +91,15 @@ async def test_a_migration_without_a_database_completes() -> None:
     assert "STAGE_SKIPPED" in await world.event_types(workflow.id)
 
 
-async def test_without_redis_the_store_approval_is_asked_at_the_database() -> None:
+async def test_without_redis_cutover_still_waits_before_object_storage() -> None:
     world = World(seed=without("redis"))
     workflow = await world.start()
-    stopped = await world.run_until_approval(workflow.id, stage=DB_STAGE)
+    stopped = await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
 
     assert stopped.status is WorkflowStatus.WAITING_APPROVAL
     assert "QUIESCE" not in actions(world, ResourceKind.DATABASE)
-    redis_stage = await world.repo.stage(workflow.id, REDIS_STAGE)
-    assert redis_stage is not None and redis_stage.status is StageStatus.SKIPPED
+    assert stopped.current_stage == 2
+    assert "CUTOVER" not in actions(world, ResourceKind.OBJECT_STORAGE)
     assert world.redis.received == []
 
 
