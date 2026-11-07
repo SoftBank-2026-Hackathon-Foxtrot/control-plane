@@ -9,9 +9,10 @@ from typing import Any
 import httpx
 import pytest
 
-from control_plane.domain.models import EndpointPair, ResourceKind, WorkflowStatus
+from control_plane.domain.models import Endpoint, EndpointPair, ResourceKind, WorkflowStatus
 from control_plane.errors import ApiError
 from control_plane.main import create_api
+from control_plane.seed import ATOMIC_LOGICAL_PROFILE, MANAGED_LOGICAL_PROFILE, SELF_LOGICAL_PROFILE
 from tests.conftest import SEED, World
 from tests.fakes import Fault
 
@@ -212,3 +213,117 @@ async def test_proxy_address_change_blocks_a_new_workflow() -> None:
     with pytest.raises(ApiError) as changed:
         await world.start()
     assert changed.value.code == "PROXY_CHANGED"
+
+
+async def test_registration_override_rejects_profile_mismatch_before_binding_creation() -> None:
+    world = World()  # Legacy seed defaults to the managed atomic profile.
+    source = Endpoint.model_validate(fixed_seed()["resources"]["database"]["source"])
+    with pytest.raises(ApiError) as mismatch:
+        await world.workflows.bindings.initialize({ResourceKind.DATABASE: source})
+    assert mismatch.value.status == 422
+    assert mismatch.value.code == "PROFILE_CONFIGURATION_REQUIRED"
+    assert "resources.database.profile" in mismatch.value.message
+    assert not world.db.bindings and world.db.binding_polls == 0
+    assert not world.redis.bindings
+
+
+async def test_workflow_rejects_profile_mismatch_before_migration_creation() -> None:
+    world = await initialized()
+    world.seed.resources.database.profile = ATOMIC_LOGICAL_PROFILE
+    with pytest.raises(ApiError) as mismatch:
+        await world.start()
+    assert mismatch.value.status == 422
+    assert mismatch.value.code == "PROFILE_CONFIGURATION_REQUIRED"
+    assert not world.db.migrations
+    assert await world.repo.active_workflow_id() is None
+
+
+async def test_workflow_rejects_an_unsupported_provider_pair() -> None:
+    world = await initialized()
+    database = world.seed.resources.database
+    assert database.source and database.target
+    target = database.target.model_copy(
+        update={
+            "provider": "GCP_CLOUDSQL",
+            "provider_instance": "projects/foxtrot/instances/target",
+        }
+    )
+    with pytest.raises(ApiError) as unsupported:
+        await world.workflows.create(
+            source_env="aws",
+            target_env="gcp",
+            actor="tester",
+            resources={ResourceKind.DATABASE: EndpointPair(source=database.source, target=target)},
+        )
+    assert unsupported.value.status == 422
+    assert unsupported.value.code == "UNSUPPORTED_PROVIDER_PAIR"
+    assert not world.db.migrations
+    assert await world.repo.active_workflow_id() is None
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        SELF_LOGICAL_PROFILE,
+        MANAGED_LOGICAL_PROFILE,
+        ATOMIC_LOGICAL_PROFILE,
+    ],
+)
+async def test_supported_profiles_register_source_before_the_target_is_selected(
+    profile: str,
+) -> None:
+    raw = fixed_seed()
+    database = raw["resources"]["database"]
+    database["profile"] = profile
+    if profile != SELF_LOGICAL_PROFILE:
+        database["source"].update(provider="AWS_RDS", providerInstance="arn:aws:rds:source")
+        database["target"].update(provider="GCP_CLOUDSQL", providerInstance="projects/target")
+    pair = EndpointPair.model_validate(
+        {"source": database["source"], "target": database.pop("target")}
+    )
+    world = World(seed=raw)
+    await world.workflows.bindings.initialize()
+    ready = await world.workflows.bindings.initialize()
+    assert ready[ResourceKind.DATABASE]["status"] == "ACTIVE"
+    workflow = await world.workflows.create(
+        source_env="aws",
+        target_env="gcp",
+        actor="tester",
+        resources={ResourceKind.DATABASE: pair},
+    )
+    resource = await world.repo.resource(workflow.id, ResourceKind.DATABASE)
+    assert resource.plan and resource.plan["profile"] == profile
+
+
+async def test_unsupported_registration_source_is_rejected_before_binding_creation() -> None:
+    world = World()
+    source = Endpoint.model_validate(
+        {
+            **fixed_seed()["resources"]["database"]["source"],
+            "provider": "GCP_CLOUDSQL",
+            "providerInstance": "projects/source",
+        }
+    )
+    with pytest.raises(ApiError) as unsupported:
+        await world.workflows.bindings.initialize({ResourceKind.DATABASE: source})
+    assert unsupported.value.status == 422
+    assert unsupported.value.code == "UNSUPPORTED_PROVIDER_PAIR"
+    assert not world.db.bindings and world.db.binding_polls == 0
+
+
+async def test_existing_binding_can_be_confirmed_on_its_managed_target_after_finalize() -> None:
+    raw = fixed_seed()
+    database = raw["resources"]["database"]
+    database["profile"] = ATOMIC_LOGICAL_PROFILE
+    database["source"].update(provider="AWS_RDS", providerInstance="arn:aws:rds:source")
+    database["target"].update(provider="GCP_CLOUDSQL", providerInstance="projects/target")
+    world = World(seed=raw)
+    await world.workflows.bindings.initialize()
+    await world.workflows.bindings.initialize()
+    workflow = await world.start()
+    assert (await world.run_to_end(workflow.id)).status is WorkflowStatus.COMPLETED
+    target = world.seed.resources.database.target
+    assert target is not None
+    ready = await world.workflows.bindings.initialize({ResourceKind.DATABASE: target})
+    assert ready[ResourceKind.DATABASE]["status"] == "ACTIVE"
+    assert len(world.db.bindings) == 1

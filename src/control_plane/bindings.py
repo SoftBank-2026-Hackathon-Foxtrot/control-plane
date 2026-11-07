@@ -45,6 +45,7 @@ class BindingService:
             if stored is None:
                 if source is None:
                     continue  # Unchanged legacy resource registration remains in PREPARE.
+                self._validate_profile(kind, source)
                 if await self.repo.active_workflow_id():
                     raise ApiError(409, "WORKFLOW_ACTIVE", "cannot register during a migration")
                 self._validate_endpoint(kind, source)
@@ -142,6 +143,7 @@ class BindingService:
             raise ApiError(
                 422, "UNSUPPORTED_ROLLBACK_MODE", "managed database reverse CDC is unsupported"
             )
+        self._validate_profile(kind, endpoints.source, endpoints.target)
         self._match_source(kind, endpoints.source, current)
         if endpoints.source.identity(kind) == endpoints.target.identity(kind):
             raise ApiError(422, "SAME_RESOURCE", f"{kind.value} source and target must differ")
@@ -230,6 +232,14 @@ class BindingService:
             )
         if kind is ResourceKind.REDIS and endpoint.database != "0":
             raise ApiError(422, "INVALID_ENDPOINT", "the Redis engine requires database '0'")
+
+    def _validate_profile(
+        self, kind: ResourceKind, source: Endpoint, target: Endpoint | None = None
+    ) -> None:
+        problem = PROFILES[kind].direct_input_problem(self.seed.resources.of(kind), source, target)
+        if problem is not None:
+            code, message = problem
+            raise ApiError(422, code, message)
 
     @staticmethod
     def _error(kind: ResourceKind, error: AdapterError | AdapterUnreachable) -> ApiError:
