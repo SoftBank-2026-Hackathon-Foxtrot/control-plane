@@ -47,7 +47,11 @@ def labels_for(application: str, record: dict[str, Any]) -> str:
 
 @router.get("/deployments")
 async def live_deployments(
-    application_id: str, context: Context, request: Request, session: CurrentSession
+    application_id: str,
+    context: Context,
+    request: Request,
+    session: CurrentSession,
+    include_inactive: bool = False,
 ) -> dict[str, Any]:
     if application_id != context.seed.application:
         raise ApiError(404, "NOT_FOUND", "unknown application")
@@ -81,8 +85,36 @@ async def live_deployments(
                 + ")"
             },
         )
+
+    def result(state: str, live: set[tuple[str, str, str]]) -> dict[str, Any]:
+        return {
+            "state": state,
+            "environments": [
+                {
+                    "environmentId": row["id"],
+                    "deploymentId": row["deployment_id"],
+                    "cloud": row["cloud"],
+                    "status": row["status"],
+                    "access": row["access"],
+                    **(
+                        {
+                            "collection": "REPORTING"
+                            if (row["org_id"], row["deployment_id"], row["cloud"]) in live
+                            else "NOT_REPORTING"
+                            if state == "OK"
+                            else "UNKNOWN"
+                        }
+                        if include_inactive
+                        else {}
+                    ),
+                }
+                for row in records
+                if include_inactive or (row["org_id"], row["deployment_id"], row["cloud"]) in live
+            ],
+        }
+
     if state != "OK":
-        return {"state": state, "environments": []}
+        return result(state, set())
     try:
         if payload["status"] != "success" or payload["data"]["resultType"] != "vector":
             raise ValueError("invalid backend result")
@@ -103,21 +135,8 @@ async def live_deployments(
                 )
             )
     except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
-        return {"state": "UNAVAILABLE", "environments": []}
-    return {
-        "state": "OK",
-        "environments": [
-            {
-                "environmentId": row["id"],
-                "deploymentId": row["deployment_id"],
-                "cloud": row["cloud"],
-                "status": row["status"],
-                "access": row["access"],
-            }
-            for row in records
-            if (row["org_id"], row["deployment_id"], row["cloud"]) in live
-        ],
-    }
+        return result("UNAVAILABLE", set())
+    return result("OK", live)
 
 
 async def scope(
