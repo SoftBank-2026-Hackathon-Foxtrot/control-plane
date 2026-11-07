@@ -51,6 +51,6 @@ NGINX는 업무 정지·업무 검사를 구현한 데모 앱이 아닙니다. �
 - API 문서: http://127.0.0.1:8000/docs
 - 로컬 DynamoDB: `foxtrot-platform-dynamodb`, 127.0.0.1:18005
 - 로컬 확인용 앱: `app-8bec04ab32aca0c2`. 등록 상태만 보존하며 검사에 사용한 컨테이너는 제거했습니다.
-- 클라우드 자원 생성·배포와 GitHub push는 수행하지 않았습니다.
+- 이 보고서의 검증은 로컬에서 수행했습니다. 클라우드 자원 생성·배포는 수행하지 않았습니다.
 
 다시 실행하려면 `make local-run`을 사용합니다. 전체 절차는 [개인 플랫폼 가이드](personal-platform.md)에 있습니다. 원본 검사 결과는 로컬 `runtime/platform-full-tests.xml`, 실제 API 실행 기록은 `runtime/live-api-smoke.json`에 있습니다.
