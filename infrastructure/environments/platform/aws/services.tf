@@ -307,7 +307,7 @@ module "control_plane" {
   name   = "control-plane"
   cpu    = 1024
   memory = 2048
-  efs = { work = { file_system_id = aws_efs_file_system.state.id, access_point_id = aws_efs_access_point.dir["provisioner"].id } }
+  efs    = { work = { file_system_id = aws_efs_file_system.state.id, access_point_id = aws_efs_access_point.dir["provisioner"].id } }
   containers = [{
     name  = "server"
     image = local.image["control-plane"]
@@ -316,9 +316,9 @@ module "control_plane" {
     entryPoint = ["sh", "-c"]
     command    = ["printf '%s' \"$CONTROL_PLANE_SEED_YAML\" > /tmp/seed.yaml && printf '%s' \"$FOXTROT_CA_PEM\" > /tmp/foxtrot-ca.pem && exec control-plane"]
     environment = merge(local.otel_env, {
-      PROVISIONER_CONFIG_JSON = local.provisioner_config
-      FOXTROT_INFRASTRUCTURE_ROOT = "/srv/infrastructure"
-      TF_PLUGIN_CACHE_DIR = "/var/lib/foxtrot-provisioner/plugin-cache"
+      PROVISIONER_CONFIG_JSON                = local.provisioner_config
+      FOXTROT_INFRASTRUCTURE_ROOT            = "/srv/infrastructure"
+      TF_PLUGIN_CACHE_DIR                    = "/var/lib/foxtrot-provisioner/plugin-cache"
       CONTROL_PLANE_ENVIRONMENT              = "production"
       CONTROL_PLANE_OBSERVATION_TOKEN_SECRET = "env:OBSERVATION_TOKEN"
       CONTROL_PLANE_SEED_PATH                = "/tmp/seed.yaml"
@@ -338,7 +338,7 @@ module "control_plane" {
       CONTROL_PLANE_TEMPO_URL      = var.observability.tempo_url
     })
     secrets = merge(local.otel_secrets, {
-      GOOGLE_CREDENTIALS = aws_secretsmanager_secret.gcp["provisioner"].arn
+      GOOGLE_CREDENTIALS    = aws_secretsmanager_secret.gcp["provisioner"].arn
       OBSERVATION_TOKEN     = local.secret_arn["observation-token"]
       TRAFFIC_SERVICE_TOKEN = local.secret_arn["traffic-service-token"]
       WORKLOAD_TOKEN        = local.secret_arn["workload-token"]

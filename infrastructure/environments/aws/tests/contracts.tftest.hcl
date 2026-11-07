@@ -53,10 +53,10 @@ run "root_wiring" {
     network                   = { "vpc_cidr" = "10.10.0.0/16", "public_subnet_cidr" = "10.10.0.0/24", "private_subnet_cidrs" = ["10.10.10.0/24", "10.10.11.0/24"], "availability_zones" = ["ap-northeast-2a", "ap-northeast-2c"] }
     sizing                    = { "compute_instance_type" = "t3.small", "compute_disk_gib" = 30, "db_instance_class" = "db.t3.micro", "db_storage_gib" = 20, "db_max_storage_gib" = 100, "db_multi_az" = false, "cache_node_type" = "cache.t3.micro", "cache_node_count" = 1 }
     ami_id                    = "ami-1234567890abcdef0"
-    app = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                       = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
   }
   assert {
-    condition     = !strcontains(module.app_runtime[0].script, "init_schema") && !strcontains(module.app_runtime[0].script, "/seed?")
+    condition     = !contains(keys(module.app_runtime[0]), "script")
     error_message = "App schema creation and seed data belong to the user app, not IaC."
   }
   assert {
@@ -64,11 +64,11 @@ run "root_wiring" {
     error_message = "AWS handoff contract must remain stable."
   }
   assert {
-    condition     = output.handoff.compute.runtime == "ECS_FARGATE"  && length(module.app_ecs) == 1
+    condition     = output.handoff.compute.runtime == "ECS_FARGATE" && length(module.app_ecs) == 1
     error_message = "User apps must run on private Fargate tasks, not an application VM."
   }
   assert {
-    condition = length(var.app.entrypoint) > 0
+    condition     = length(var.app.entrypoint) > 0
     error_message = "The platform supplies the application container entrypoint."
   }
   assert {
@@ -87,11 +87,11 @@ run "tailscale_makes_the_vm_a_router" {
     final_snapshot_identifier = "fox-aws-poc01-final-unique"
     network                   = { "vpc_cidr" = "10.10.0.0/16", "public_subnet_cidr" = "10.10.0.0/24", "private_subnet_cidrs" = ["10.10.10.0/24", "10.10.11.0/24"], "availability_zones" = ["ap-northeast-2a", "ap-northeast-2c"] }
     ami_id                    = "ami-1234567890abcdef0"
-    app = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                       = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
     tailscale                 = { auth_key_secret = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:foxtrot/tailscale-authkey-aws" }
   }
   assert {
-    condition     = !strcontains(module.app_runtime[0].script, "tailscale up")  && output.router_inputs.vpc_id == module.vpc.vpc_id
+    condition     = !contains(keys(module.app_runtime[0]), "script") && output.router_inputs.vpc_id == module.vpc.vpc_id
     error_message = "Managed apps use a separately registered subnet router, never a Tailscale sidecar."
   }
 }
@@ -106,7 +106,7 @@ run "reject_non_registry_image" {
     final_snapshot_identifier = "fox-aws-poc01-final-unique"
     network                   = { "vpc_cidr" = "10.10.0.0/16", "public_subnet_cidr" = "10.10.0.0/24", "private_subnet_cidrs" = ["10.10.10.0/24", "10.10.11.0/24"], "availability_zones" = ["ap-northeast-2a", "ap-northeast-2c"] }
     ami_id                    = "ami-1234567890abcdef0"
-    app = { image = "docker.io/library/nginx:latest", entrypoint = ["python", "-m", "app.main"] }
+    app                       = { image = "docker.io/library/nginx:latest", entrypoint = ["python", "-m", "app.main"] }
   }
   expect_failures = [var.app]
 }
@@ -127,7 +127,7 @@ run "reject_open_ssh" {
     network                   = { "vpc_cidr" = "10.10.0.0/16", "public_subnet_cidr" = "10.10.0.0/24", "private_subnet_cidrs" = ["10.10.10.0/24", "10.10.11.0/24"], "availability_zones" = ["ap-northeast-2a", "ap-northeast-2c"] }
     sizing                    = { "compute_instance_type" = "t3.small", "compute_disk_gib" = 30, "db_instance_class" = "db.t3.micro", "db_storage_gib" = 20, "db_max_storage_gib" = 100, "db_multi_az" = false, "cache_node_type" = "cache.t3.micro", "cache_node_count" = 1 }
     ami_id                    = "ami-1234567890abcdef0"
-    app = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                       = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
     key_name                  = "existing-key"
   }
   expect_failures = [var.admin_cidrs]
@@ -149,7 +149,7 @@ run "reject_database_public_port" {
     network                   = { "vpc_cidr" = "10.10.0.0/16", "public_subnet_cidr" = "10.10.0.0/24", "private_subnet_cidrs" = ["10.10.10.0/24", "10.10.11.0/24"], "availability_zones" = ["ap-northeast-2a", "ap-northeast-2c"] }
     sizing                    = { "compute_instance_type" = "t3.small", "compute_disk_gib" = 30, "db_instance_class" = "db.t3.micro", "db_storage_gib" = 20, "db_max_storage_gib" = 100, "db_multi_az" = false, "cache_node_type" = "cache.t3.micro", "cache_node_count" = 1 }
     ami_id                    = "ami-1234567890abcdef0"
-    app = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                       = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
   }
   expect_failures = [var.web_ports]
 }
@@ -170,7 +170,7 @@ run "reject_unreviewed_size" {
     network                   = { "vpc_cidr" = "10.10.0.0/16", "public_subnet_cidr" = "10.10.0.0/24", "private_subnet_cidrs" = ["10.10.10.0/24", "10.10.11.0/24"], "availability_zones" = ["ap-northeast-2a", "ap-northeast-2c"] }
     sizing                    = { "compute_instance_type" = "p5.48xlarge" }
     ami_id                    = "ami-1234567890abcdef0"
-    app = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                       = { image = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
   }
   expect_failures = [var.sizing]
 }

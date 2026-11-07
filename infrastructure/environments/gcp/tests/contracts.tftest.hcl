@@ -32,12 +32,12 @@ run "root_wiring" {
     web_ports           = [80, 443]
     admin_cidrs         = []
     deletion_protection = true
-    app = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                 = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
     network             = { "subnet_cidr" = "10.20.0.0/24", "service_range_address" = "10.21.0.0", "service_range_prefix" = 16 }
     sizing              = { "compute_machine_type" = "e2-small", "compute_disk_gib" = 30, "db_tier" = "db-custom-1-3840", "db_storage_gib" = 20, "db_max_storage_gib" = 100, "db_high_availability" = false, "cache_memory_gib" = 1, "cache_high_availability" = false }
   }
   assert {
-    condition     = !strcontains(module.app_runtime[0].script, "init_schema") && !strcontains(module.app_runtime[0].script, "/seed?")
+    condition     = !contains(keys(module.app_runtime[0]), "script")
     error_message = "App schema creation and seed data belong to the user app, not IaC."
   }
   assert {
@@ -45,11 +45,11 @@ run "root_wiring" {
     error_message = "GCP handoff contract must remain stable."
   }
   assert {
-    condition     = output.handoff.compute.runtime == "CLOUD_RUN"  && length(module.app_cloud_run) == 1
+    condition     = output.handoff.compute.runtime == "CLOUD_RUN" && length(module.app_cloud_run) == 1
     error_message = "User apps must run on Cloud Run with Direct VPC egress, not an application VM."
   }
   assert {
-    condition = length(var.app.entrypoint) > 0
+    condition     = length(var.app.entrypoint) > 0
     error_message = "The platform supplies the application container entrypoint."
   }
   assert {
@@ -71,7 +71,7 @@ run "reject_open_ssh" {
     web_ports           = [80, 443]
     admin_cidrs         = ["0.0.0.0/0"]
     deletion_protection = true
-    app = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                 = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
     network             = { "subnet_cidr" = "10.20.0.0/24", "service_range_address" = "10.21.0.0", "service_range_prefix" = 16 }
     sizing              = { "compute_machine_type" = "e2-small", "compute_disk_gib" = 30, "db_tier" = "db-custom-1-3840", "db_storage_gib" = 20, "db_max_storage_gib" = 100, "db_high_availability" = false, "cache_memory_gib" = 1, "cache_high_availability" = false }
   }
@@ -91,7 +91,7 @@ run "reject_database_public_port" {
     web_ports           = [5432]
     admin_cidrs         = []
     deletion_protection = true
-    app = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                 = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
     network             = { "subnet_cidr" = "10.20.0.0/24", "service_range_address" = "10.21.0.0", "service_range_prefix" = 16 }
     sizing              = { "compute_machine_type" = "e2-small", "compute_disk_gib" = 30, "db_tier" = "db-custom-1-3840", "db_storage_gib" = 20, "db_max_storage_gib" = 100, "db_high_availability" = false, "cache_memory_gib" = 1, "cache_high_availability" = false }
   }
@@ -111,7 +111,7 @@ run "reject_unreviewed_size" {
     web_ports           = [80, 443]
     admin_cidrs         = []
     deletion_protection = true
-    app = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
+    app                 = { image = "asia-northeast3-docker.pkg.dev/test-project/apps/chiikawa-groupbuy:test", entrypoint = ["python", "-m", "app.main"] }
     network             = { "subnet_cidr" = "10.20.0.0/24", "service_range_address" = "10.21.0.0", "service_range_prefix" = 16 }
     sizing              = { "compute_machine_type" = "a3-highgpu-8g" }
   }

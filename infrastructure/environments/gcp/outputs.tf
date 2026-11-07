@@ -27,7 +27,7 @@ locals {
     service_cidrs                 = ["${var.network.service_range_address}/${var.network.service_range_prefix}"]
     private_services_peering_name = module.network.private_services_peering_name
     client_service_account_emails = [module.iam.service_account_email]
-    client_network_tags          = local.managed_app ? [module.app_cloud_run[0].network_tag] : []
+    client_network_tags           = local.managed_app ? [module.app_cloud_run[0].network_tag] : []
     app_ports                     = var.app == null ? [] : [var.app.port]
     service_ports                 = [6432, 8080, 8000, 7000]
     redis_ports                   = [local.redis_transit_encryption ? 6378 : 6379]
