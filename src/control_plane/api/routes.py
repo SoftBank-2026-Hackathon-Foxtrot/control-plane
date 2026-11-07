@@ -125,11 +125,8 @@ async def workspaces(session: CurrentSession) -> list[Workspace]:
 
 # ---- what is managed -------------------------------------------------------------------------
 @router.get("/v1/applications", response_model_by_alias=True)
-async def applications(session: CurrentSession, context: Context) -> list[ApplicationView]:
+async def applications(_: CurrentSession, context: Context) -> list[ApplicationView]:
     seed = context.seed
-    from control_plane.deployment.api import registered
-
-    extra = await registered(context, str(session.user.id))
     return [
         ApplicationView(
             id=seed.application,
@@ -140,15 +137,6 @@ async def applications(session: CurrentSession, context: Context) -> list[Applic
             ],
             resources=[kind for kind in ResourceKind if kind in seed.managed],
         )
-    ] + [
-        ApplicationView(
-            id=app["id"],
-            scope=f"application:{app['id']}",
-            environments=[],
-            resources=list(ResourceKind),
-        )
-        for app in extra
-        if app["id"] != seed.application
     ]
 
 

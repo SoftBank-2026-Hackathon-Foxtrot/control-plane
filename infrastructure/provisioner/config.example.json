@@ -92,6 +92,9 @@
       }
     },
     "onprem": {
+      "images": {
+        "chiikawa-groupbuy": "registry.internal/apps/chiikawa-groupbuy:latest"
+      },
       "nodes": {
         "lab": {
           "dockerHost": "ssh://deployer@node.internal",
