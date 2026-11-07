@@ -91,6 +91,16 @@ class ResourceView(Model):
     target_writes_possible: bool
     readiness: dict[str, Any] | None
     observed_at: Any
+    business_write_access: str | None = None
+    transition_id: str | None = None
+    active_operation_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    progress: dict[str, Any] | None = None
+    replication: dict[str, Any] | None = None
+    streams: list[dict[str, Any]] = Field(default_factory=list)
+    checks: list[dict[str, Any]] = Field(default_factory=list)
+    rollback: dict[str, Any] | None = None
+    observation: dict[str, Any] = Field(default_factory=dict)
 
 
 class ActorView(Model):
