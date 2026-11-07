@@ -10,6 +10,7 @@ from control_plane.domain.models import (
     ActorState,
     HoldDesired,
     Model,
+    RedisRoute,
     ResourceKind,
     StageState,
     TrafficRecord,
@@ -122,6 +123,9 @@ class HoldView(Model):
     generation: int
     held_since: Any
     actors: list[ActorView]
+    redis_route: RedisRoute = RedisRoute.DIRECT
+    redis_endpoint: str | None = None
+    redis_route_generation: int = 0
 
 
 class WorkflowDetail(Model):
@@ -150,6 +154,12 @@ class Heartbeat(Model):
     generation: int = Field(ge=0)
     state: ActorState
     in_flight: int = Field(ge=0)
+    redis_route: RedisRoute | None = None
+    """The route this process uses now. Absent: it does not switch Redis connections."""
+    redis_route_generation: int = Field(default=0, ge=0)
+    """The route order it has followed."""
+    stale_connections: int = Field(default=0, ge=0)
+    """Redis connections still open on the route it left."""
 
 
 class DirectiveView(Model):
@@ -157,6 +167,10 @@ class DirectiveView(Model):
     generation: int
     object_migration_id: str | None
     poll_after_ms: int
+    redis_route: RedisRoute
+    redis_endpoint: str | None
+    """For DIRECT: the environment whose Redis to connect to. None keeps the process's default."""
+    redis_route_generation: int
 
 
 def allowed_commands(workflow: Workflow) -> list[str]:

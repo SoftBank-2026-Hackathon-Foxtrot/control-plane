@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from control_plane.clock import Clock, stamp
-from control_plane.domain.models import ActorAck, ActorState, HoldDesired, HoldState
+from control_plane.domain.models import ActorAck, ActorState, HoldDesired, HoldState, RedisRoute
 from control_plane.seed import Seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import VersionConflict
@@ -22,6 +22,9 @@ class Directive:
     generation: int
     object_migration_id: str | None
     poll_after_ms: int
+    redis_route: RedisRoute = RedisRoute.DIRECT
+    redis_endpoint: str | None = None
+    redis_route_generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,9 @@ class WorkloadCoordinator:
         state: ActorState,
         in_flight: int,
         active_web_sockets: int | None = None,
+        redis_route: RedisRoute | None = None,
+        redis_route_generation: int = 0,
+        stale_connections: int = 0,
     ) -> Directive:
         await self.repo.save_ack(
             ActorAck(
@@ -69,6 +75,9 @@ class WorkloadCoordinator:
                 in_flight=in_flight,
                 active_web_sockets=active_web_sockets,
                 observed_at=self.clock.now(),
+                redis_route=redis_route,
+                redis_route_generation=redis_route_generation,
+                stale_connections=stale_connections,
             )
         )
         hold, _ = await self.repo.hold(self.scope)
@@ -76,17 +85,27 @@ class WorkloadCoordinator:
             desired=hold.desired,
             generation=hold.generation,
             object_migration_id=hold.object_migration_id,
-            poll_after_ms=self._poll_interval(hold),
+            poll_after_ms=await self._poll_interval(hold),
+            redis_route=hold.redis_route,
+            redis_endpoint=hold.redis_endpoint,
+            redis_route_generation=hold.redis_route_generation,
         )
 
-    def _poll_interval(self, hold: HoldState) -> int:
-        """Fast while stopping, and until the processes have had time to report that they run."""
+    async def _poll_interval(self, hold: HoldState) -> int:
+        """Fast while stopping, while a Redis route change is not followed yet, and until the
+        processes have had time to report that they run."""
         timings = self.seed.timings
         settling = hold.released_at is not None and (
             (self.clock.now() - hold.released_at).total_seconds() < timings.resume_workload_timeout
         )
-        fast = hold.desired is HoldDesired.HOLD or settling
-        return timings.fast_poll_ms if fast else timings.idle_poll_ms
+        if hold.desired is HoldDesired.HOLD or settling:
+            return timings.fast_poll_ms
+        # Read only when nothing else already makes it fast: it scans every report.
+        moving = (
+            hold.redis_route_generation > 0
+            and not (await self.route_followed(hold.redis_route_generation, hold.redis_route))[0]
+        )
+        return timings.fast_poll_ms if moving else timings.idle_poll_ms
 
     # ---- what the engine calls ----------------------------------------------------------------
     async def publish_object_migration(self, workflow_id: str, migration_id: str) -> None:
@@ -156,6 +175,54 @@ class WorkloadCoordinator:
                 continue
             return updated
         raise VersionConflict(f"hold of {self.scope}")
+
+    async def request_redis_route(
+        self, workflow_id: str, route: RedisRoute, endpoint: str | None
+    ) -> HoldState:
+        """Starts a route change, or returns the one already ordered."""
+        for _ in range(5):
+            hold, version = await self.repo.hold(self.scope)
+            if hold.redis_route is route and hold.redis_endpoint == endpoint:
+                return hold
+            updated = hold.model_copy(
+                update={
+                    "workflow_id": workflow_id,
+                    "redis_route": route,
+                    "redis_endpoint": endpoint,
+                    "redis_route_generation": hold.redis_route_generation + 1,
+                }
+            )
+            try:
+                await self.repo.save_hold(updated, expected_version=version)
+            except VersionConflict:
+                continue
+            return updated
+        raise VersionConflict(f"hold of {self.scope}")
+
+    async def route_followed(self, generation: int, route: RedisRoute) -> tuple[bool, list[str]]:
+        """Whether every process of every actor follows the route order `generation` and has
+        closed its connections on the other route, and which actors do not yet."""
+        now = self.clock.now()
+        ttl = timedelta(seconds=self.seed.timings.instance_ttl)
+        live = [ack for ack in await self.repo.acks(self.scope) if now - ack.observed_at <= ttl]
+        waiting = []
+        for actor_id, expected in self.seed.all_actors().items():
+            mine = [ack for ack in live if ack.actor_id == actor_id]
+            done = [
+                ack
+                for ack in mine
+                if ack.redis_route is route
+                and ack.redis_route_generation == generation
+                and ack.stale_connections == 0
+            ]
+            # Every live process must be done: one more than expected is still a direct writer.
+            if len(done) < expected or len(done) < len(mine):
+                stale = sum(ack.stale_connections for ack in mine)
+                waiting.append(
+                    f"{actor_id} ({len(done)}/{max(expected, len(mine))} on {route.value}"
+                    f", {stale} old connections)"
+                )
+        return not waiting, waiting
 
     async def actor_statuses(self, generation: int) -> list[ActorStatus]:
         now = self.clock.now()

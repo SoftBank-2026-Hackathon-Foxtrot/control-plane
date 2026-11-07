@@ -17,6 +17,7 @@ from control_plane.domain.stages import ALLOWED_ROUTES_BEFORE, CUTOVER_RESOURCE
 from control_plane.engine.commands import Command, CommandRunner, expected_after
 from control_plane.engine.context import Outcome, Passed, StageContext, Stop, Wait
 from control_plane.engine.evidence import WorkloadNotHeld, business_probes
+from control_plane.engine.redisroute import enter_proxy, leave_proxy
 from control_plane.engine.traffic_observation import set_traffic
 from control_plane.engine.transition import held_command, hold_workload, release_workload
 from control_plane.probes import p95
@@ -57,6 +58,10 @@ class Prepare:
                     return Stop("APP_NOT_READY", f"{env.app_url} does not answer /readyz")
                 return Wait(f"waiting for {env.app_url}")
         ctx.reset_timer("apps_ready")
+        # Before any plan: the Redis adapter's PREPARE refuses a source reached directly.
+        entered = await enter_proxy(ctx)
+        if not isinstance(entered, Passed):
+            return entered
 
         for kind in CUTOVER_ORDER:
             registered = await self._register(ctx, kind)
@@ -430,7 +435,8 @@ class Finalize:
         ]
         if wrong:
             return Stop("ROUTE_MISMATCH", "a finalized resource is not on the target", wrong)
-        return Passed()
+        # The way back is gone, so the proxy is no longer needed in front of the target.
+        return await leave_proxy(ctx, ctx.workflow.target_env)
 
 
 def build_handlers(

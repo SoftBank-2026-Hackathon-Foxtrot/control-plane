@@ -249,12 +249,18 @@ async def heartbeat(scope: str, body: Heartbeat, context: Context) -> DirectiveV
         state=body.state,
         in_flight=body.in_flight,
         active_web_sockets=body.active_web_sockets,
+        redis_route=body.redis_route,
+        redis_route_generation=body.redis_route_generation,
+        stale_connections=body.stale_connections,
     )
     return DirectiveView(
         desired=directive.desired,
         generation=directive.generation,
         object_migration_id=directive.object_migration_id,
         poll_after_ms=directive.poll_after_ms,
+        redis_route=directive.redis_route,
+        redis_endpoint=directive.redis_endpoint,
+        redis_route_generation=directive.redis_route_generation,
     )
 
 
@@ -339,6 +345,9 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
     )
     hold_view = HoldView(
         is_live=live,
+        redis_route=hold.redis_route,
+        redis_endpoint=hold.redis_endpoint,
+        redis_route_generation=hold.redis_route_generation,
         desired=hold.desired if live else "UNKNOWN",
         generation=hold.generation if live else 0,
         held_since=hold.held_since if live else None,

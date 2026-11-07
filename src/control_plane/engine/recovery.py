@@ -13,11 +13,19 @@ from control_plane.engine.context import Outcome, Passed, StageContext, Stop, Wa
 from control_plane.engine.evidence import (
     WorkloadNotHeld,
     business_probes,
+    keep_evidence_alive,
+    quiesce_reference,
     target_probe_failing,
 )
+from control_plane.engine.redisroute import leave_proxy
 from control_plane.engine.stages import CUTOVER_ORDER
 from control_plane.engine.traffic_observation import set_traffic
-from control_plane.engine.transition import held_command, hold_workload, release_workload
+from control_plane.engine.transition import (
+    held_command,
+    hold_workload,
+    release_workload,
+    transition_id,
+)
 from control_plane.traffic import TrafficError
 
 Step = Callable[[StageContext, ResourceKind, dict[str, Any]], Awaitable[Outcome]]
@@ -37,6 +45,7 @@ class Rollback:
             "CHECK": self._check,
             "HOLD": self._hold,
             "QUIESCE": self._quiesce,
+            "READY": self._ready,
             "ROLLBACK": self._rollback,
             "RESUME": self._resume,
             "RELEASE": self._release,
@@ -94,7 +103,11 @@ class Rollback:
                     "failure mode needs a person's confirmation and failing business probes",
                     resource=kind,
                 )
-        elif "ROLLBACK" in view.allowed_actions and view.readiness("rollback").result == "FAIL":
+        elif (
+            not PROFILES[kind].rollback_needs_ready_after_hold(ctx.seed.resources.of(kind))
+            and "ROLLBACK" in view.allowed_actions
+            and view.readiness("rollback").result == "FAIL"
+        ):
             return Stop(
                 "ROLLBACK_NOT_SAFE",
                 f"{kind.value} is not ready to return",
@@ -108,7 +121,12 @@ class Rollback:
     async def _hold(self, ctx: StageContext, kind: ResourceKind, data: dict[str, Any]) -> Outcome:
         outcome = await hold_workload(ctx, kind)
         if isinstance(outcome, Passed):
-            data["phase"] = data["next"]
+            data["phase"] = (
+                "READY"
+                if data["next"] == "ROLLBACK"
+                and PROFILES[kind].rollback_needs_ready_after_hold(ctx.seed.resources.of(kind))
+                else data["next"]
+            )
             return Wait("workload held")
         return outcome
 
@@ -118,8 +136,51 @@ class Rollback:
         outcome = await held_command(self.runner, ctx, kind, "QUIESCE", slot="ROLLBACK_QUIESCE")
         if not isinstance(outcome, Passed):
             return outcome
-        data["phase"] = "ROLLBACK"
+        data["phase"] = (
+            "READY"
+            if PROFILES[kind].rollback_needs_ready_after_hold(ctx.seed.resources.of(kind))
+            else "ROLLBACK"
+        )
         return Wait("QUIESCE done")
+
+    async def _ready(self, ctx: StageContext, kind: ResourceKind, data: dict[str, Any]) -> Outcome:
+        if PROFILES[kind].rollback_needs_ready_after_hold(ctx.seed.resources.of(kind)):
+            hold = await ctx.services.coordinator.hold()
+            if hold.desired is not HoldDesired.HOLD:
+                raise WorkloadNotHeld("no hold in force")
+            await keep_evidence_alive(ctx, hold.generation)
+            if not data.get("ready_evidence") or not ctx.stage.data.get("quiesce_ref"):
+                await quiesce_reference(
+                    ctx, kind, transition_id(ctx, kind), hold.generation, "ROLLBACK"
+                )
+                data["ready_evidence"] = True
+                return Wait("rollback hold evidence published")
+            view = await ctx.view(kind, fresh=True)
+            decision = view.readiness("rollback")
+            if decision.result == "FAIL":
+                return Stop(
+                    "ROLLBACK_NOT_SAFE",
+                    "the adapter refused reverse replication rollback",
+                    list(decision.reasons),
+                    resource=kind,
+                )
+            if (
+                not decision.passed
+                or view.health != "OK"
+                or view.active_operation_id
+                or "ROLLBACK" not in view.allowed_actions
+            ):
+                if ctx.elapsed("rollback_ready") > ctx.seed.timings.command_timeout:
+                    return Stop(
+                        "ROLLBACK_NOT_READY",
+                        "the adapter did not confirm rollback readiness; workload remains held",
+                        list(decision.reasons),
+                        resource=kind,
+                    )
+                return Wait("waiting for reverse replication rollback readiness")
+        ctx.reset_timer("rollback_ready")
+        data["phase"] = "ROLLBACK"
+        return Wait("rollback ready")
 
     async def _rollback(
         self, ctx: StageContext, kind: ResourceKind, data: dict[str, Any]
@@ -208,7 +269,16 @@ class Abort:
         coordinator = ctx.services.coordinator
         if (await coordinator.hold()).desired is HoldDesired.HOLD:
             await coordinator.release()
-        return await self._restore_traffic(ctx)
+        if not ctx.stage.data.get("abort_traffic_restored"):
+            restored = await self._restore_traffic(ctx)
+            if not isinstance(restored, Passed):
+                return restored
+            # Once: leaving the proxy may take a few ticks, and the weights must not be set again.
+            ctx.stage.data["abort_traffic_restored"] = True
+        # Off the proxy, to wherever Redis stayed. Its plan is settled, so it is on one side alone.
+        redis = await ctx.resource(ResourceKind.REDIS)
+        env = ctx.workflow.target_env if redis.last_route == "TARGET" else ctx.workflow.source_env
+        return await leave_proxy(ctx, env)
 
     async def _restore_traffic(self, ctx: StageContext) -> Outcome:
         """Users go back to the source if the data is still there. Otherwise weights stay."""

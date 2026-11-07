@@ -51,6 +51,9 @@ class ResourceSeed(Model):
     replication_ref: str | None = None
     expected_apps: int | None = Field(default=None, ge=1)
     catalog: DatabaseCatalog | None = None
+    direct_when_idle: bool = False
+    """Redis only: the application connects directly outside a migration and is moved onto the
+    proxy before PREPARE and off it after FINALIZE or an abort (Redis design 3-8)."""
 
 
 class DatabaseSeed(ResourceSeed):
@@ -69,8 +72,13 @@ class DatabaseSeed(ResourceSeed):
                 raise ValueError("DMS profile needs replicationRef and catalog.dmsJob")
         elif self.replication_ref is not None or self.catalog.dms_job is not None:
             raise ValueError("managed logical profile rejects replicationRef and catalog.dmsJob")
-        if self.policy.rollback_mode != "BEFORE_TARGET_WRITE":
-            raise ValueError("database requires BEFORE_TARGET_WRITE; reverse replication is absent")
+        if self.policy.rollback_mode not in {"BEFORE_TARGET_WRITE", "REVERSE_REQUIRED"}:
+            raise ValueError("unsupported database rollbackMode")
+        if (
+            self.policy.rollback_mode == "REVERSE_REQUIRED"
+            and self.profile != ATOMIC_LOGICAL_PROFILE
+        ):
+            raise ValueError("database REVERSE_REQUIRED needs the atomic logical v2 profile")
         budget = self.policy.max_quiesce_seconds
         if not 1 <= budget <= 300 or not budget.is_integer():
             raise ValueError("database maxQuiesceSeconds must be an integer from 1 to 300")
@@ -88,6 +96,8 @@ class Resources(Model):
             raise ValueError("redis and object need bindingRef")
         if self.object.expected_apps is None:
             raise ValueError("object needs expectedApps: with none reporting, no guard applies")
+        if self.database.direct_when_idle or self.object.direct_when_idle:
+            raise ValueError("directWhenIdle applies to redis only")
         return self
 
     def of(self, kind: ResourceKind) -> ResourceSeed:
@@ -156,6 +166,10 @@ class Timings(Model):
     held_tick_interval: float = 0.1
     fast_poll_ms: int = 200
     idle_poll_ms: int = 5000
+    redis_route_timeout: float = 120
+    """How long every process may take to move its Redis connection."""
+    redis_route_stable_window: float = 10
+    """No direct connection may be reported for this long before the proxy entry counts."""
 
 
 class Seed(Model):
