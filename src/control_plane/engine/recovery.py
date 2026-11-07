@@ -17,7 +17,6 @@ from control_plane.engine.evidence import (
     quiesce_reference,
     target_probe_failing,
 )
-from control_plane.engine.stages import CUTOVER_ORDER
 from control_plane.engine.traffic_observation import set_traffic
 from control_plane.engine.transition import (
     held_command,
@@ -243,7 +242,7 @@ class Abort:
 
     async def advance(self, ctx: StageContext) -> Outcome:
         unsafe = []
-        for kind in CUTOVER_ORDER:
+        for kind in ctx.seed.managed:
             if (await ctx.resource(kind)).migration_id is None:
                 continue
             record = await ctx.services.repo.latest_command(ctx.workflow.id, kind, "CANCEL")
@@ -282,6 +281,8 @@ class Abort:
         if not records or records[-1].requested.get(ctx.workflow.target_env) == 0:
             return Passed()
         for kind in (ResourceKind.DATABASE, ResourceKind.REDIS):
+            if kind not in ctx.seed.managed:
+                continue
             if (await ctx.resource(kind)).last_route != "SOURCE":
                 await ctx.emit("TRAFFIC_LEFT_IN_PLACE", f"{kind.value} is not on its source")
                 return Passed()
@@ -302,7 +303,7 @@ class ManualReconcile:
     async def advance(self, ctx: StageContext) -> Outcome:
         refused = []
         slot = f"MANUAL_RECONCILE_{ctx.workflow.reconcile_count}"
-        for kind in CUTOVER_ORDER:
+        for kind in ctx.seed.managed:
             if (await ctx.resource(kind)).migration_id is None:
                 continue
             outcome = await self.runner.run(ctx, Command(kind, "RECONCILE", slot=slot))

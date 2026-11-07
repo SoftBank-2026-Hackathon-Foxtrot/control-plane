@@ -30,6 +30,10 @@ class BindingService:
         self.seed = seed
         self.adapters = adapters
 
+    def _fixed(self) -> list[ResourceKind]:
+        """The fixed-proxy resources this application has."""
+        return [kind for kind in FIXED_RESOURCES if kind in self.seed.managed]
+
     async def initialize(
         self, sources: dict[ResourceKind, Endpoint] | None = None
     ) -> dict[ResourceKind, dict[str, Any]]:
@@ -38,8 +42,12 @@ class BindingService:
             raise ApiError(
                 422, "UNSUPPORTED_RESOURCE", "only database and Redis have fixed proxies"
             )
+        if any(kind not in self.seed.managed for kind in sources):
+            raise ApiError(
+                422, "RESOURCE_NOT_MANAGED", "this application does not have that resource"
+            )
         result = {}
-        for kind in FIXED_RESOURCES:
+        for kind in self._fixed():
             stored = await self.repo.application_binding(self.seed.application, kind)
             source = sources.get(kind) or self.seed.resources.of(kind).source
             if stored is None:
@@ -57,6 +65,7 @@ class BindingService:
                 }
                 if kind is ResourceKind.DATABASE:
                     database = self.seed.resources.database
+                    assert database is not None  # _fixed() only yields managed resources
                     schema = database.schema_config
                     catalog = database.catalog
                     if schema is None and catalog is None:
@@ -89,7 +98,7 @@ class BindingService:
 
     async def list(self) -> dict[ResourceKind, dict[str, Any]]:
         result = {}
-        for kind in FIXED_RESOURCES:
+        for kind in self._fixed():
             stored = await self.repo.application_binding(self.seed.application, kind)
             if stored:
                 result[kind] = await self._read(kind, stored)
@@ -98,6 +107,12 @@ class BindingService:
     async def plan(
         self, workflow: Workflow, kind: ResourceKind, endpoints: EndpointPair | None
     ) -> ResourceState | None:
+        if kind not in self.seed.managed:
+            if endpoints is not None:
+                raise ApiError(
+                    422, "RESOURCE_NOT_MANAGED", f"{kind.value} is not managed by this application"
+                )
+            return None
         stored = await self.repo.application_binding(self.seed.application, kind)
         seed = self.seed.resources.of(kind)
         if endpoints is None and seed.source is None and stored is None:

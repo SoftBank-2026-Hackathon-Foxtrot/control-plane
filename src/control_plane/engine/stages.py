@@ -22,8 +22,6 @@ from control_plane.engine.transition import held_command, hold_workload, release
 from control_plane.probes import p95
 from control_plane.traffic import TrafficError
 
-CUTOVER_ORDER = (ResourceKind.OBJECT_STORAGE, ResourceKind.REDIS, ResourceKind.DATABASE)
-
 
 class StageHandler(Protocol):
     async def advance(self, ctx: StageContext) -> Outcome: ...
@@ -36,6 +34,8 @@ async def check_routes(ctx: StageContext) -> Outcome:
         return Passed()
     wrong = []
     for kind, routes in allowed.items():
+        if kind not in ctx.seed.managed:
+            continue
         view = await ctx.view(kind, fresh=True)
         if view.route not in routes:
             wrong.append(f"{kind.value}: {view.route}, expected {'/'.join(sorted(routes))}")
@@ -57,7 +57,7 @@ class Prepare:
                     return Stop("APP_NOT_READY", f"{env.app_url} does not answer /readyz")
                 return Wait(f"waiting for {env.app_url}")
         ctx.reset_timer("apps_ready")
-        for kind in CUTOVER_ORDER:
+        for kind in ctx.seed.managed:
             registered = await self._register(ctx, kind)
             if not isinstance(registered, Passed):
                 return registered
@@ -85,6 +85,7 @@ class Prepare:
         if resource.binding_ref:
             return Passed()
         seed = ctx.seed.resources.database
+        assert seed is not None  # PREPARE only registers resources the seed manages
         catalog = seed.catalog
         assert catalog is not None
         assert seed.source_ref is not None and seed.target_ref is not None
@@ -180,7 +181,7 @@ class Sync:
         self.runner = runner
 
     async def advance(self, ctx: StageContext) -> Outcome:
-        for kind in CUTOVER_ORDER:
+        for kind in ctx.seed.managed:
             started = await self.runner.run(
                 ctx, Command(kind, "START_SYNC", expected=expected_after("START_SYNC"))
             )
@@ -189,7 +190,7 @@ class Sync:
         # Started is not copied. READY appears only in the status, and can go away again.
         waiting = [
             f"{kind.value}: {view.lifecycle}"
-            for kind in CUTOVER_ORDER
+            for kind in ctx.seed.managed
             if (view := await ctx.view(kind, fresh=True)).lifecycle != "READY"
         ]
         if waiting:
@@ -418,7 +419,7 @@ class Finalize:
         self.runner = runner
 
     async def advance(self, ctx: StageContext) -> Outcome:
-        for kind in CUTOVER_ORDER:
+        for kind in ctx.seed.managed:
             outcome = await self.runner.run(
                 ctx,
                 Command(
@@ -436,7 +437,7 @@ class Finalize:
                 return outcome
         wrong = [
             f"{kind.value}: {view.route}"
-            for kind in CUTOVER_ORDER
+            for kind in ctx.seed.managed
             # COMPLETED alone does not say which side a resource ended on.
             if (view := await ctx.view(kind, fresh=True)).route != "TARGET"
         ]

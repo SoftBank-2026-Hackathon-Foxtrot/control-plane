@@ -104,7 +104,7 @@ class World:
         traffic: TrafficController | None = None,
         seed: dict[str, Any] | None = None,
     ) -> None:
-        self.seed = Seed.model_validate(seed or SEED)
+        self.seed = Seed.model_validate(SEED if seed is None else seed)
         self.clock = FakeClock()
         self.table = table or MemoryTable()
         self.gate = FakeDbGate(self.seed, self.clock)
@@ -136,7 +136,8 @@ class World:
             seed=self.seed,
             repo=repo,
             clock=self.clock,
-            adapters={kind: adapter.client() for kind, adapter in self.adapters.items()},
+            # Only the resources the seed manages get an adapter, as in production.
+            adapters={kind: self.adapters[kind].client() for kind in self.seed.managed},
             gate=self.gate,
             traffic=self.traffic_controller,
             prober=self.prober,

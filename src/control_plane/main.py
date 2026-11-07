@@ -127,14 +127,15 @@ def build_platform(settings: Settings) -> Platform:
             client(base_url=endpoint.url, verify=endpoint.verify),
             secret(endpoint.token_secret),
         )
-        for kind in ResourceKind
+        for kind in seed.managed
         for endpoint in [seed.adapter(kind)]
     }
     gate: DbGate = UnavailableDbGate()
     if settings.db_gate_table:
         gate = SdkDbGate(
             settings.db_gate_table,
-            namespace=seed.resources.database.gate_namespace or settings.db_gate_namespace,
+            namespace=(seed.resources.database and seed.resources.database.gate_namespace)
+            or settings.db_gate_namespace,
             region=settings.region,
             endpoint=None if settings.dynamodb_endpoint == "memory" else settings.dynamodb_endpoint,
         )
@@ -181,7 +182,7 @@ def build_platform(settings: Settings) -> Platform:
 def _check_production(settings: Settings, seed: Seed) -> None:
     if settings.environment != "production":
         return
-    for kind in ResourceKind:
+    for kind in seed.managed:
         if seed.adapter(kind).verify is False:
             raise ValueError(f"{kind.value}: TLS verification cannot be off in production")
 

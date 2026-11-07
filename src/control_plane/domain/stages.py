@@ -35,6 +35,37 @@ CUTOVER_RESOURCE: dict[StageKind, ResourceKind] = {
     StageKind.REDIS_CUTOVER: ResourceKind.REDIS,
 }
 
+CUTOVER_ORDER: tuple[ResourceKind, ...] = (
+    ResourceKind.OBJECT_STORAGE,
+    ResourceKind.REDIS,
+    ResourceKind.DATABASE,
+)
+"""Every resource kind, in the order the plan moves them. A seed may manage only some of them."""
+
+
+def skipped(kind: StageKind, managed: frozenset[ResourceKind]) -> bool:
+    """A cutover stage for a resource the application does not have is skipped."""
+    resource = CUTOVER_RESOURCE.get(kind)
+    return resource is not None and resource not in managed
+
+
+def requires_approval(index: int, managed: frozenset[ResourceKind]) -> bool:
+    """Whether the stage at `index` waits for a person.
+
+    An approval asked at a skipped stage moves to the next stage that runs, so leaving a resource
+    out never removes a decision: without Redis, the approval before the store cutovers is asked
+    at the DB cutover instead.
+    """
+    if PLAN[index].requires_approval:
+        return True
+    earlier = index - 1
+    while earlier >= 0 and skipped(PLAN[earlier].kind, managed):
+        if PLAN[earlier].requires_approval:
+            return True
+        earlier -= 1
+    return False
+
+
 SOURCE = frozenset({"SOURCE"})
 # The object adapter keeps reading both buckets until FINALIZE and reports MIXED.
 OBJECT_MOVED = frozenset({"TARGET", "MIXED"})

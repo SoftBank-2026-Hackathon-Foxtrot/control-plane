@@ -14,6 +14,7 @@ import yaml
 from pydantic import Field, model_validator
 
 from control_plane.domain.models import Endpoint, Model, ResourceKind
+from control_plane.domain.stages import CUTOVER_ORDER
 
 MANAGED_LOGICAL_PROFILE: Final = "postgres-managed-logical-pgbouncer-v1"
 ATOMIC_LOGICAL_PROFILE: Final = "postgres-managed-logical-pgbouncer-v2"
@@ -133,41 +134,63 @@ class DatabaseSeed(ResourceSeed):
 
 
 class Resources(Model):
-    database: DatabaseSeed
-    redis: ResourceSeed
-    object: ResourceSeed
+    """The resources this application has. Leave one out and the plan skips its cutover."""
+
+    database: DatabaseSeed | None = None
+    redis: ResourceSeed | None = None
+    object: ResourceSeed | None = None
 
     @model_validator(mode="after")
     def complete(self) -> Self:
-        if (
-            self.redis.source is None and self.redis.binding_ref is None
-        ) or self.object.binding_ref is None:
-            raise ValueError("redis and object need bindingRef")
-        if self.object.expected_apps is None:
-            raise ValueError("object needs expectedApps: with none reporting, no guard applies")
-        if self.database.direct_when_idle or self.object.direct_when_idle:
-            raise ValueError("directWhenIdle applies to redis only")
+        if not self.managed():
+            raise ValueError("resources needs at least one of database, redis and object")
+        if self.redis is not None and self.redis.source is None and self.redis.binding_ref is None:
+            raise ValueError("redis needs bindingRef")
+        if self.object is not None:
+            if self.object.binding_ref is None:
+                raise ValueError("object needs bindingRef")
+            if self.object.expected_apps is None:
+                raise ValueError("object needs expectedApps: with none reporting, no guard applies")
+        for resource in (self.database, self.object):
+            if resource is not None and resource.direct_when_idle:
+                raise ValueError("directWhenIdle applies to redis only")
         return self
 
-    def of(self, kind: ResourceKind) -> ResourceSeed:
+    def _by_kind(self) -> dict[ResourceKind, ResourceSeed | None]:
         return {
             ResourceKind.DATABASE: self.database,
             ResourceKind.REDIS: self.redis,
             ResourceKind.OBJECT_STORAGE: self.object,
-        }[kind]
+        }
+
+    def managed(self) -> tuple[ResourceKind, ...]:
+        """The resources present, in cutover order."""
+        present = self._by_kind()
+        return tuple(kind for kind in CUTOVER_ORDER if present[kind] is not None)
+
+    def of(self, kind: ResourceKind) -> ResourceSeed:
+        resource = self._by_kind()[kind]
+        if resource is None:
+            raise KeyError(f"{kind.value} is not managed by this application")
+        return resource
 
 
 class Adapters(Model):
-    database: AdapterEndpoint
-    redis: AdapterEndpoint
-    object: AdapterEndpoint
+    """One adapter per managed resource. An adapter for a resource left out is not called."""
+
+    database: AdapterEndpoint | None = None
+    redis: AdapterEndpoint | None = None
+    object: AdapterEndpoint | None = None
 
     def of(self, kind: ResourceKind) -> AdapterEndpoint:
-        return {
+        endpoint = {
             ResourceKind.DATABASE: self.database,
             ResourceKind.REDIS: self.redis,
             ResourceKind.OBJECT_STORAGE: self.object,
         }[kind]
+        if endpoint is None:
+            raise KeyError(f"no adapter for {kind.value}")
+        return endpoint
 
 
 class ProbeSeed(Model):
@@ -219,7 +242,7 @@ class Seed(Model):
     scope: str
     environments: dict[str, Environment] = Field(min_length=2)
     resources: Resources
-    adapters: Adapters
+    adapters: Adapters = Field(default_factory=Adapters)
     probe: ProbeSeed
     canary_weights: list[int] = Field(default_factory=lambda: [5])
     traffic_weights: list[int] = Field(default_factory=lambda: [25, 50, 100])
@@ -235,12 +258,23 @@ class Seed(Model):
                 raise ValueError("weights are percentages of the target")
         if not self.traffic_weights or self.traffic_weights[-1] != 100:
             raise ValueError("trafficWeights must end at 100")
+        for kind in self.resources.managed():
+            try:
+                self.adapter(kind)
+            except KeyError as error:
+                raise ValueError(f"{kind.value} is managed but has no adapter") from error
         return self
+
+    @property
+    def managed(self) -> tuple[ResourceKind, ...]:
+        """The resources this application has, in cutover order."""
+        return self.resources.managed()
 
     def all_actors(self) -> dict[str, int]:
         return {a: n for env in self.environments.values() for a, n in env.actors.items()}
 
     def adapter(self, kind: ResourceKind) -> AdapterEndpoint:
+        """The resource's own adapter, else the shared one. KeyError if the resource is absent."""
         return self.resources.of(kind).adapter or self.adapters.of(kind)
 
 

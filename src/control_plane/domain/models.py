@@ -84,6 +84,8 @@ class StageStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
     PASSED = "PASSED"
+    SKIPPED = "SKIPPED"
+    """A cutover stage for a resource the application does not have."""
     HALTED = "HALTED"
 
 

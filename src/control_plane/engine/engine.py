@@ -23,7 +23,7 @@ from control_plane.domain.models import (
     WorkflowEvent,
     WorkflowStatus,
 )
-from control_plane.domain.stages import PLAN
+from control_plane.domain.stages import PLAN, requires_approval, skipped
 from control_plane.engine.commands import CommandRunner
 from control_plane.engine.context import Outcome, Passed, Services, StageContext, Stop, Wait
 from control_plane.engine.evidence import RunningEvidence
@@ -130,12 +130,21 @@ class Engine:
 
     # ---- forward ------------------------------------------------------------------------------
     async def _drive_stage(self, workflow: Workflow, stage: StageState) -> None:
-        if stage.status is StageStatus.PASSED:
+        if stage.status in (StageStatus.PASSED, StageStatus.SKIPPED):
             # The previous tick saved the stage but lost the race to save the workflow.
             await self._next_stage(workflow)
             return
-        definition = PLAN[workflow.current_stage]
-        if definition.requires_approval and workflow.approved_through < stage.index:
+        managed = frozenset(self.services.seed.managed)
+        if skipped(stage.kind, managed):
+            # The application has no such resource. Nothing to ask, nothing to move.
+            stage.status = StageStatus.SKIPPED
+            stage.finished_at = self.services.clock.now()
+            stage.detail = "not managed by this application"
+            await self.services.repo.save_stage(workflow.id, stage)
+            await self._event(workflow, "STAGE_SKIPPED", stage.kind.value, stage.index)
+            await self._next_stage(workflow)
+            return
+        if requires_approval(stage.index, managed) and workflow.approved_through < stage.index:
             await self._wait_for_approval(workflow)
             return
         if stage.status is not StageStatus.RUNNING:

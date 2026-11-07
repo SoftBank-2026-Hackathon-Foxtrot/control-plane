@@ -135,7 +135,7 @@ async def applications(_: CurrentSession, context: Context) -> list[ApplicationV
                 EnvironmentView(name=name, traffic_pool=env.traffic_pool, actors=env.actors)
                 for name, env in seed.environments.items()
             ],
-            resources=list(ResourceKind),
+            resources=[kind for kind in ResourceKind if kind in seed.managed],
         )
     ]
 
@@ -306,13 +306,15 @@ async def _detail(context: ApiContext, workflow: Workflow) -> WorkflowDetail:
     actors = await context.coordinator.actor_statuses(hold.generation)
     store = ObservationStore(repo.table)
     resources = []
-    for kind in ResourceKind:
+    for kind in ResourceKind:  # the API keeps one order; resources the app lacks are left out
+        if kind not in context.seed.managed:
+            continue
         state = await repo.resource(workflow.id, kind)
         resources.append(
             _resource(state, await store.latest(workflow.id, kind.value), context.clock.now())
         )
     for resource in resources:
-        if resource.kind is ResourceKind.OBJECT_STORAGE:
+        if resource.kind is ResourceKind.OBJECT_STORAGE and context.seed.resources.object:
             resource.details.setdefault("object", {})["expectedApps"] = (
                 context.seed.resources.object.expected_apps
             )

@@ -110,7 +110,8 @@ class WorkflowService:
 
     async def _check_capabilities(self) -> None:
         """Refuse a plan up front if an adapter does not offer what the seed relies on."""
-        for kind, profile in PROFILES.items():
+        for kind in self.seed.managed:
+            profile = PROFILES[kind]
             try:
                 capabilities = await self.adapters[kind].capabilities()
             except (AdapterUnreachable, AdapterError) as error:
@@ -154,6 +155,13 @@ class WorkflowService:
                 "INVALID_STATE",
                 f"{command.command} is not allowed while {workflow.status.value}",
                 list(ALLOWED_COMMANDS[workflow.status]),
+            )
+        if command.resource is not None and command.resource not in self.seed.managed:
+            raise ApiError(
+                422,
+                "RESOURCE_NOT_MANAGED",
+                f"{command.resource.value} is not managed by this application",
+                [kind.value for kind in self.seed.managed],
             )
         handler = getattr(self, f"_{command.command.lower()}")
         updated: Workflow = handler(workflow, command, actor)
