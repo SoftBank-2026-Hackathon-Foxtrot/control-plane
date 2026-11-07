@@ -323,7 +323,7 @@ module "control_plane" {
     # The image carries no seed; write the seed and the internal CA from the environment first.
     entryPoint = ["sh", "-c"]
     command    = ["printf '%s' \"$CONTROL_PLANE_SEED_YAML\" > /tmp/seed.yaml && printf '%s' \"$FOXTROT_CA_PEM\" > /tmp/foxtrot-ca.pem && exec control-plane"]
-    environment = merge(local.otel_env, {
+    environment = merge(local.otel_env, local.security_review_environment, {
       PROVISIONER_CONFIG_JSON                = local.provisioner_config
       FOXTROT_INFRASTRUCTURE_ROOT            = "/srv/infrastructure"
       TF_PLUGIN_CACHE_DIR                    = "/var/lib/foxtrot-provisioner/plugin-cache"
@@ -345,7 +345,7 @@ module "control_plane" {
       CONTROL_PLANE_PROMETHEUS_URL = var.observability.prometheus_url
       CONTROL_PLANE_TEMPO_URL      = var.observability.tempo_url
     })
-    secrets = merge(local.otel_secrets, {
+    secrets = merge(local.otel_secrets, local.security_review_secrets, {
       GOOGLE_CREDENTIALS    = aws_secretsmanager_secret.gcp["provisioner"].arn
       OBSERVATION_TOKEN     = local.secret_arn["observation-token"]
       TRAFFIC_SERVICE_TOKEN = local.secret_arn["traffic-service-token"]

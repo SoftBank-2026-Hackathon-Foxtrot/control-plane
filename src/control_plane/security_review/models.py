@@ -25,6 +25,7 @@ class ReviewConfig(Model):
         pattern=r"^serviceAccount:[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$"
     )
     gcp_credentials_ref: str | None = None
+    gcp_apply_credentials_ref: str | None = None
     mode: Literal["cloud", "fixture"] = "cloud"
     read_only: bool = True
 
@@ -32,6 +33,11 @@ class ReviewConfig(Model):
     def separate_buckets(self) -> Self:
         if self.gcp_bucket == self.extra_bucket:
             raise ValueError("the extra demo bucket must not be the application bucket")
+        if self.mode == "cloud" and not self.read_only:
+            if not self.extra_bucket.startswith("foxtrot-security-demo-"):
+                raise ValueError("writes require a designated demo bucket")
+            if not self.gcp_apply_credentials_ref:
+                raise ValueError("writes require separate apply credentials")
         return self
 
     @property
@@ -83,6 +89,14 @@ def source_scope_matches(document: dict[str, Any], bucket: str) -> bool:
 
 def principal_bindings(policy: dict[str, Any], principal: str) -> list[dict[str, Any]]:
     return [binding for binding in policy.get("bindings", []) if principal in binding["members"]]
+
+
+def public_bindings(policy: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        binding
+        for binding in policy.get("bindings", [])
+        if {"allUsers", "allAuthenticatedUsers"}.intersection(binding["members"])
+    ]
 
 
 def without_extra_grant(policy: dict[str, Any], principal: str) -> dict[str, Any]:

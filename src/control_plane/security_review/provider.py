@@ -27,13 +27,17 @@ class CloudProvider:
     def __init__(self, config: ReviewConfig, region: str) -> None:
         self.config, self.region = config, region
 
-    def _headers(self) -> dict[str, str]:
+    def _headers(self, *, write: bool = False) -> dict[str, str]:
         import google.auth
         from google.auth.transport.requests import Request
         from google.oauth2.service_account import Credentials
 
         scopes = ["https://www.googleapis.com/auth/devstorage.full_control"]
-        reference = self.config.gcp_credentials_ref
+        reference = (
+            self.config.gcp_apply_credentials_ref if write else self.config.gcp_credentials_ref
+        )
+        if write and not reference:
+            raise ValueError("separate apply credentials are required")
         if reference:
             value = (
                 boto3.client(
@@ -86,11 +90,29 @@ class CloudProvider:
     def apply(self, policy: dict[str, Any]) -> None:
         if self.config.read_only:
             raise ValueError("security review is read-only")
+        bucket = self.config.extra_bucket
+        if not bucket.startswith("foxtrot-security-demo-") or bucket == self.config.gcp_bucket:
+            raise ValueError("not a designated demo bucket")
+        # Validate the target with the reader identity; the writer only changes bucket IAM.
+        url = f"https://storage.googleapis.com/storage/v1/b/{quote(bucket, safe='')}"
+        with httpx.Client(headers=self._headers(), timeout=10, follow_redirects=False) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            metadata = response.json()
+            if (
+                metadata.get("labels", {}).get("purpose") != "foxtrot-security-demo"
+                or metadata.get("iamConfiguration", {}).get("publicAccessPrevention") != "enforced"
+            ):
+                raise ValueError("demo bucket protections changed")
+            response = client.get(url + "/o", params={"maxResults": 1, "versions": "true"})
+            response.raise_for_status()
+            if response.json().get("items"):
+                raise ValueError("demo bucket is not empty")
         # Bucket and principal never come from the POST body. etag prevents lost updates.
         response = httpx.put(
             "https://storage.googleapis.com/storage/v1/b/"
             f"{quote(self.config.extra_bucket, safe='')}/iam",
-            headers=self._headers(),
+            headers=self._headers(write=True),
             json=policy,
             timeout=10,
             follow_redirects=False,

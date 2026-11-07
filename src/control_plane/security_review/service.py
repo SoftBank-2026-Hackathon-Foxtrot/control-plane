@@ -17,6 +17,7 @@ from .models import (
     ReviewConfig,
     fingerprint,
     principal_bindings,
+    public_bindings,
     source_scope_matches,
     without_extra_grant,
 )
@@ -83,6 +84,9 @@ class ReviewService:
         )
         if state["phase"] in BUSY and self.clock.now().isoformat() >= state.get("leaseUntil", ""):
             visible.update(phase="error", error="작업 결과를 다시 확인해야 합니다.")
+        if visible["phase"] in BUSY | {"error", "applied"}:
+            visible["checks"] = [dict(check, status="unknown") for check in state["checks"]]
+            visible["appReady"] = None
         return visible
 
     async def save(self, state: dict[str, Any]) -> None:
@@ -111,7 +115,11 @@ class ReviewService:
         source_ok = source_scope_matches(snapshot["source"], cfg.aws_bucket)
         base = principal_bindings(snapshot["target"], cfg.gcp_principal)
         extra = principal_bindings(snapshot["extra"], cfg.gcp_principal)
-        supported = all(not b.get("condition") and b["role"] in OBJECT_ROLES for b in extra)
+        public_target = bool(public_bindings(snapshot["target"]))
+        public_extra = bool(public_bindings(snapshot["extra"]))
+        supported = not public_extra and all(
+            not b.get("condition") and b["role"] in OBJECT_ROLES for b in extra
+        )
         return [
             {
                 "id": "source-scope",
@@ -124,13 +132,14 @@ class ReviewService:
             {
                 "id": "required-access",
                 "status": "pass"
-                if any(
+                if not public_target
+                and any(
                     b["role"] == "roles/storage.objectUser" and not b.get("condition") for b in base
                 )
                 else "unknown",
                 "title": "앱에 필요한 접근 유지",
                 "source": "객체 목록·읽기·쓰기·삭제",
-                "target": cfg.gcp_bucket,
+                "target": "공개 권한 확인 필요" if public_target else cfg.gcp_bucket,
                 "evidence": f"GCS getIamPolicy · {cfg.gcp_bucket} · roles/storage.objectUser",
             },
             {
@@ -138,7 +147,11 @@ class ReviewService:
                 "status": "unknown" if not supported else "fail" if extra else "pass",
                 "title": "추가 버킷 접근",
                 "source": "선택한 정책은 앱 버킷만 허용",
-                "target": cfg.extra_bucket if extra else "추가 직접 권한 없음",
+                "target": "공개 권한 확인 필요"
+                if public_extra
+                else cfg.extra_bucket
+                if extra
+                else "추가 직접 권한 없음",
                 "evidence": f"GCS getIamPolicy · {cfg.extra_bucket} · "
                 + (", ".join(b["role"] for b in extra) or "해당 계정 바인딩 없음"),
             },
@@ -162,7 +175,7 @@ class ReviewService:
         return "gap" if any(c["status"] == "fail" for c in state["checks"]) else "matched"
 
     async def change(self, action: str, change: Change, actor: str) -> dict[str, Any]:
-        if self.config.read_only and action in {"plan", "apply"}:
+        if self.config.read_only and action == "apply":
             raise ApiError(403, "SECURITY_READ_ONLY", "조회 전용으로 연결되어 있습니다.")
         state = await self.load()
         now = self.clock.now()
@@ -223,6 +236,8 @@ class ReviewService:
                     raise ApiError(
                         409, "PLAN_STALE", "클라우드 설정이 변경되었습니다. 다시 조사하세요."
                     )
+                if not await self.probe():
+                    raise ApiError(409, "APP_NOT_READY", "앱 응답을 확인한 뒤 다시 조회하세요.")
                 changed = without_extra_grant(latest["extra"], self.config.gcp_principal)
                 await asyncio.to_thread(self.provider.apply, changed)
                 state.update(phase="applied", plan=None)
