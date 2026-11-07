@@ -171,7 +171,13 @@ async def verify(
         await service(context).idle(app)
         service(context).expect(app, body.expected_version)
         # Runtime observation is connected by the runtime adapter, never inferred from a digest.
-        available = await context.runtime.image_available(session.user.id, app.id, app.image)
+        target_env = list(app.configuration.environments)[1] if app.configuration else None
+        available = await context.runtime.image_available(
+            session.user.id,
+            app.id,
+            app.image,
+            target_env,
+        )
         return await verify_application(
             service(context),
             app,

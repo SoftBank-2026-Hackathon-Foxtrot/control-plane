@@ -187,7 +187,13 @@ class RuntimeService:
             await self.release(record)
         return record
 
-    async def image_available(self, owner: str, app_id: str, image: ImageSpec) -> bool:
+    async def image_available(
+        self,
+        owner: str,
+        app_id: str,
+        image: ImageSpec,
+        environment_id: str | None = None,
+    ) -> bool:
         page = await self.repo.table.query("RUNTIME", "run-")
         for item in page.items:
             record = RuntimeRecord.model_validate_json(item.body)
@@ -196,6 +202,7 @@ class RuntimeService:
                 and record.application_id == app_id
                 and record.image == image
                 and record.status == "READY"
+                and (environment_id is None or record.environment_id == environment_id)
             ) and await self.driver(record.target).ready(record):
                 return True
         return False

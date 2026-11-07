@@ -5,9 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from control_plane.applications import Application, ApplicationService, Verification
-from control_plane.domain.models import ResourceKind
+from control_plane.domain.models import ActorState, ResourceKind
 from control_plane.errors import ApiError
 from control_plane.workflows import WorkflowService
+from control_plane.workload.coordinator import WorkloadCoordinator
 
 
 async def verify_application(
@@ -28,6 +29,10 @@ async def verify_application(
             checks["adapterProfiles"] = False
         for name, env in app.configuration.environments.items():
             checks[f"environment:{name}"] = await prober.is_ready(env.app_url)
+        coordinator = WorkloadCoordinator(service.repo, app.configuration, service.clock)
+        hold = await coordinator.hold()
+        reached, _ = await coordinator.all_reached(hold.generation, ActorState.RUNNING)
+        checks["workloadActors"] = reached
     passed = all(checks.values())
     updated = await service.save(
         app.model_copy(

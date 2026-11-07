@@ -154,6 +154,26 @@ class Engine:
         if definition.requires_approval and workflow.approved_through < stage.index:
             await self._wait_for_approval(workflow)
             return
+        if (
+            workflow.application_snapshot
+            and self.services.readiness
+            and stage.status is not StageStatus.RUNNING
+            and stage.kind.value not in {"SYNC", "FINALIZE"}
+        ):
+            hold = await self.services.coordinator.hold()
+            if hold.desired is not HoldDesired.HOLD:
+                blockers = await self.services.readiness(workflow, self.services.seed)
+                if blockers:
+                    await self._halt(
+                        workflow,
+                        stage,
+                        Stop(
+                            "TARGET_NOT_READY",
+                            "target runtime failed the transition gate",
+                            blockers,
+                        ),
+                    )
+                    return
         if stage.status is not StageStatus.RUNNING:
             stage.status = StageStatus.RUNNING
             stage.started_at = stage.started_at or self.services.clock.now()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
@@ -62,6 +62,7 @@ class Services:
     gate: DbGate
     traffic: TrafficController
     prober: Any
+    readiness: Callable[[Workflow, Seed], Awaitable[list[str]]] | None = None
     adapter_factory: Callable[[Seed], dict[ResourceKind, AdapterClient]] | None = None
 
     def configured(self, seed: Seed) -> Services:

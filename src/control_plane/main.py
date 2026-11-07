@@ -17,11 +17,12 @@ from control_plane.adapters.client import AdapterClient
 from control_plane.api.applications import router as application_router
 from control_plane.api.dependencies import ApiContext
 from control_plane.api.routes import router
+from control_plane.applications import ImageSpec
 from control_plane.auth import AuthService
 from control_plane.clock import Clock, SystemClock
 from control_plane.config import Settings, resolve_secret
 from control_plane.dbgate import DbGate, SdkDbGate, UnavailableDbGate
-from control_plane.domain.models import ResourceKind
+from control_plane.domain.models import ResourceKind, Workflow
 from control_plane.engine.context import Services
 from control_plane.engine.engine import Engine
 from control_plane.errors import ApiError
@@ -64,6 +65,23 @@ def assemble(
     runtime_drivers: dict[str, RuntimeDriver] | None = None,
 ) -> Platform:
     coordinator = WorkloadCoordinator(repo, seed, clock)
+    runtime = RuntimeService(repo, clock, runtime_drivers or {})
+
+    async def readiness(workflow: Workflow, selected: Seed) -> list[str]:
+        blockers = []
+        if not await prober.is_ready(selected.environments[workflow.target_env].app_url):
+            blockers.append("TARGET_APP_NOT_READY")
+        if runtime_drivers is not None and workflow.application_snapshot:
+            image = ImageSpec.model_validate(workflow.application_snapshot["image"])
+            if not await runtime.image_available(
+                workflow.owner_id,
+                workflow.application,
+                image,
+                workflow.target_env,
+            ):
+                blockers.append("TARGET_IMAGE_NOT_CONFIRMED")
+        return blockers
+
     services = Services(
         repo=repo,
         clock=clock,
@@ -74,6 +92,7 @@ def assemble(
         traffic=traffic,
         prober=prober,
         adapter_factory=adapter_factory,
+        readiness=readiness,
     )
     return Platform(
         context=ApiContext(
@@ -87,7 +106,7 @@ def assemble(
             workload_token=workload_token,
             prober=prober,
             services=services,
-            runtime=RuntimeService(repo, clock, runtime_drivers or {}),
+            runtime=runtime,
         ),
         engine=Engine(services),
         probe_loop=ProbeLoop(repo, seed, prober, clock),

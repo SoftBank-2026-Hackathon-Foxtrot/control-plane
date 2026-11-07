@@ -59,6 +59,7 @@ async def test_registered_snapshot_runs_on_existing_engine_after_restart(world: 
     service = ApplicationService(world.repo, world.clock)
     app = await service.create("alice", ApplicationInput(name="goods", image={"imageRef": IMAGE}))
     app = await bind_configuration(service, "alice", app.id, app.version, world.seed)
+    await world.workload.beat()
     report = await verify_application(service, app, world.services.adapters, world.prober, True)
     assert report.passed
     app = await service.get("alice", app.id)
@@ -101,3 +102,39 @@ async def test_policy_cannot_reverse_resource_refs_and_caps_pause(world: World) 
     assert bounded.resources.redis.policy.max_quiesce_seconds == 1.8
     page = await world.table.query(f"APP_AUDIT#alice#{app.id}")
     assert len(page.items) >= 3
+
+
+async def test_target_failure_halts_before_any_adapter_mutation(world: World) -> None:
+    from dataclasses import replace
+
+    from control_plane.applications import bind_configuration
+    from control_plane.domain.models import WorkflowStatus
+    from control_plane.engine.engine import Engine
+    from control_plane.workflows import WorkflowService
+
+    service = ApplicationService(world.repo, world.clock)
+    app = await service.create("alice", ApplicationInput(name="goods", image={"imageRef": IMAGE}))
+    app = await bind_configuration(service, "alice", app.id, app.version, world.seed)
+    assert app.configuration is not None
+    workflow = await WorkflowService(
+        world.repo,
+        app.configuration,
+        world.clock,
+        world.services.adapters,
+    ).create(
+        source_env="aws",
+        target_env="gcp",
+        actor="alice",
+        owner_id="alice",
+        application_snapshot=app.model_dump(mode="json", by_alias=True),
+    )
+    await world.approve(workflow.id)
+
+    async def failed(*args: object) -> list[str]:
+        return ["TARGET_IMAGE_NOT_CONFIRMED"]
+
+    await Engine(replace(world.services, readiness=failed)).tick()
+    stopped = await world.workflow(workflow.id)
+    assert stopped.status == WorkflowStatus.HALTED
+    assert stopped.halt.code == "TARGET_NOT_READY"
+    assert await world.repo.commands(workflow.id) == []
