@@ -21,6 +21,7 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 
 from control_plane.main import create_api
+from control_plane.seed import Seed
 from tests.conftest import World
 from tests.test_system_metrics import deployment_records
 
@@ -29,7 +30,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def client_and_records():
+def client_and_records(shared=False):
     world = World()
     world.clock.now = lambda: datetime.now(UTC)
     ctx = world.platform.context
@@ -45,19 +46,49 @@ def client_and_records():
             }
         ),
     )
-    app = create_api(world.platform, run_loops=False)
     records = deployment_records()
+    for record in records.values():
+        record["status"] = "READY"
     records["env-same-cloud"] = {
         **records["env-own-aws"],
         "id": "env-same-cloud",
         "deployment_id": "same-cloud-other-deployment",
     }
-    app.state.deployment_service = SimpleNamespace(store=SimpleNamespace(environment=records.get))
+    if shared:
+        registrations = []
+        for index, key in enumerate(("env-own-aws", "env-same-cloud"), start=1):
+            record = records[key]
+            record["org_id"] = "shared-org"
+            registrations.append(
+                {
+                    "environmentId": f"env-{index:012x}",
+                    "deploymentId": record["deployment_id"],
+                    "ownerId": record["org_id"],
+                    "environment": record["cloud"],
+                }
+            )
+            records["shared:" + registrations[-1]["environmentId"]] = record
+        data = world.platform.context.seed.model_dump(by_alias=True)
+        data["systemDeployments"] = registrations
+        world.platform.context = replace(world.platform.context, seed=Seed.model_validate(data))
+    app = create_api(world.platform, run_loops=False)
+    app.state.deployment_service = (
+        None
+        if shared
+        else SimpleNamespace(
+            store=SimpleNamespace(
+                environment=records.get, environments=lambda: list(records.values())
+            )
+        )
+    )
     return httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test"), records
 
 
-async def test_same_app_and_instance_do_not_mix_deployments_or_owners():
-    client, records = client_and_records()
+@pytest.mark.parametrize("shared", [False, True])
+async def test_same_app_and_instance_do_not_mix_deployments_or_owners(shared):
+    client, records = client_and_records(shared)
+    selected = "shared:env-000000000001" if shared else "env-own-aws"
+    other = "shared:env-000000000002" if shared else "env-same-cloud"
     owner = records["env-own-aws"]["org_id"]
     providers = []
     try:
@@ -65,6 +96,7 @@ async def test_same_app_and_instance_do_not_mix_deployments_or_owners():
             ("deploy-one", owner, 100),
             ("same-cloud-other-deployment", owner, 900),
             ("deploy-one", "other-owner", 8000),
+            ("unregistered", owner, 12000),
         ]:
             provider = MeterProvider(
                 resource=Resource.create(
@@ -93,13 +125,16 @@ async def test_same_app_and_instance_do_not_mix_deployments_or_owners():
                 "foxtrot.runtime.memory_bytes",
                 callbacks=[lambda _, value=size: [Observation(value)]],
             )
+            provider.get_meter("isolation-test").create_observable_gauge(
+                "foxtrot.runtime.collection", callbacks=[lambda _: [Observation(1)]]
+            )
             provider.force_flush()
         async with client:
             for _attempt in range(30):
                 response = await client.get(
                     "/v1/applications/goods/system-metrics",
                     params={
-                        "deployment": "env-own-aws",
+                        "deployment": selected,
                         "instance": "isolation-instance",
                         "category": "memory",
                         "minutes": 15,
@@ -117,7 +152,7 @@ async def test_same_app_and_instance_do_not_mix_deployments_or_owners():
             response = await client.get(
                 "/v1/applications/goods/system-metrics",
                 params={
-                    "deployment": "env-same-cloud",
+                    "deployment": other,
                     "instance": "isolation-instance",
                     "category": "memory",
                     "minutes": 15,
@@ -125,6 +160,19 @@ async def test_same_app_and_instance_do_not_mix_deployments_or_owners():
             )
             metric = next(row for row in response.json()["series"] if row["id"] == "memory_bytes")
             assert [p[1] for p in metric["points"] if p[1] is not None][-1] == 900
+            # Collector batches the new heartbeat independently of historical samples.
+            for _attempt in range(30):
+                listed = (
+                    await client.get("/v1/applications/goods/system-metrics/deployments")
+                ).json()
+                if {row["environmentId"] for row in listed["environments"]} == {selected, other}:
+                    break
+                await asyncio.sleep(0.5)
+            assert listed["state"] == "OK", listed
+            assert {row["environmentId"] for row in listed["environments"]} == {selected, other}
+            assert {row["access"] for row in listed["environments"]} == {
+                "shared" if shared else "personal"
+            }
             assert (
                 await client.get(
                     "/v1/applications/goods/system-metrics/instances",
