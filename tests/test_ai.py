@@ -750,16 +750,17 @@ async def test_unapplied_and_platform_template_records_are_not_sources(
 ) -> None:
     await console.login()
     engine = console.app.state.ai_service.infra.deployment
+    engine.destroy(source_id(console, "gcp"))
+    drain(engine)
     _, planned = engine.create(
         {
             "org": {"id": org_id(USER, "goods"), "name": "goods"},
-            "cloud": "onprem",
-            "app": {"image": CONFIG["clouds"]["onprem"]["images"]["chiikawa-groupbuy"]},
-            "target": {"nodeId": "lab"},
+            "cloud": "gcp",
             "mode": "plan",
         }
     )
     drain(engine)
+    assert engine.store.environment(planned["environmentId"])["status"] == "PLANNED"
     assert (
         await post(console, "chat", {"message": "hi", "deploymentId": planned["environmentId"]})
     ).status_code == 404
