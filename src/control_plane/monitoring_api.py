@@ -34,6 +34,24 @@ MODULE_COMPONENT = {
 }
 
 
+@router.get("/v1/telemetry/workflows", response_model_by_alias=True)
+async def live_workflows(context: Context, _: CurrentSession) -> list[Workflow]:
+    """Live selector, separate from the full workflow history and explicit detail links."""
+    store = ObservationStore(context.repo.table)
+    result = []
+    now = context.clock.now()
+    for workflow_id in await context.repo.workflow_ids():
+        workflow = await context.repo.workflow(workflow_id)
+        if not workflow or workflow.status.terminal or workflow.status == "PLANNED":
+            continue
+        for resource in MODULES:
+            snapshot = await store.latest(workflow_id, resource)
+            if observation_state(snapshot, now)["freshness"] == "FRESH":
+                result.append(workflow)
+                break
+    return sorted(result, key=lambda workflow: workflow.created_at, reverse=True)
+
+
 async def workflow_for(context: Context, workflow_id: str) -> Workflow:
     workflow = await context.repo.workflow(workflow_id)
     if workflow is None:

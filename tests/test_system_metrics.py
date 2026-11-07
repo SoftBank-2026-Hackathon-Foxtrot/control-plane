@@ -164,3 +164,74 @@ def test_disk_is_container_io_only():
     result = metrics.queries('application_id="goods"', "app-1", "disk")
     assert set(result) == {"disk_read", "disk_write"}
     assert all("filesystem" not in query for query, unit in result.values())
+
+
+async def test_live_deployments_match_owner_cloud_and_recent_heartbeat(world, monkeypatch):
+    records = deployment_records()
+    for row in records.values():
+        row["status"] = "READY"
+    records["env-destroyed"] = {
+        **records["env-own-aws"],
+        "id": "env-destroyed",
+        "deployment_id": "deleted",
+        "status": "DESTROYED",
+    }
+    queries = []
+
+    async def backend(http, url, path, params):
+        queries.append(params["query"])
+        return "OK", {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [
+                    {
+                        "metric": {"deployment_id": dep, "deployment_environment_name": env},
+                        "value": [0, 1],
+                    }
+                    for dep, env in [
+                        ("deploy-one", "aws"),
+                        ("deploy-two", "aws"),
+                        ("other-deploy", "aws"),
+                        ("deleted", "aws"),
+                    ]
+                ],
+            },
+        }
+
+    monkeypatch.setattr(metrics, "read_backend", backend)
+    async with await client_for(world) as client:
+        client._transport.app.state.deployment_service.store.environments = lambda: list(
+            records.values()
+        )
+        response = await client.get("/v1/applications/goods/system-metrics/deployments")
+        assert response.status_code == 200
+        assert [row["environmentId"] for row in response.json()["environments"]] == ["env-own-aws"]
+        assert "time() - 30" in queries[0]
+        assert records["env-own-aws"]["org_id"] in queries[0]
+        assert 'application_id="goods"' in queries[0]
+
+        async def unavailable(*args):
+            return "UNAVAILABLE", {}
+
+        monkeypatch.setattr(metrics, "read_backend", unavailable)
+        response = await client.get("/v1/applications/goods/system-metrics/deployments")
+        assert response.json() == {"state": "UNAVAILABLE", "environments": []}
+
+
+async def test_fresh_instances_are_not_hidden_by_old_exporters(world, monkeypatch):
+    async def backend(*args):
+        now = world.clock.now().timestamp()
+        rows = [
+            {"metric": {"service_instance_id": f"old-{index}"}, "value": [now, now - 90]}
+            for index in range(70)
+        ]
+        rows.append({"metric": {"service_instance_id": "live"}, "value": [now, now - 1]})
+        return "OK", {"status": "success", "data": {"resultType": "vector", "result": rows}}
+
+    monkeypatch.setattr(metrics, "read_backend", backend)
+    async with await client_for(world) as client:
+        response = await client.get(
+            "/v1/applications/goods/system-metrics/instances?deployment=env-own-aws"
+        )
+        assert any(row["id"] == "live" and not row["stale"] for row in response.json()["instances"])

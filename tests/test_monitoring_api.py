@@ -200,3 +200,58 @@ async def test_scope_reports_workflow_resources_without_credentials(world):
         assert redis["target"] == {"host": "target.internal", "database": "0"}
         assert "never-expose" not in response.text
         assert (await client.get(path.replace(workflow.id, "missing"))).status_code == 404
+
+
+async def test_live_selector_excludes_history_and_stopped_collection(world):
+    from control_plane.domain.models import WorkflowStatus
+
+    base = await world.start()
+    store = ObservationStore(world.repo.table)
+    for index, (name, status, age, error) in enumerate(
+        [
+            ("live-one", "RUNNING", 1, None),
+            ("live-two", "WAITING_APPROVAL", 2, None),
+            ("halted-but-reporting", "HALTED", 1, None),
+            ("stopped", "RUNNING", 60, None),
+            ("error", "HALTED", 1, "OFFLINE"),
+            ("planned", "PLANNED", 1, None),
+            ("finished", "COMPLETED", 1, None),
+            ("aborted", "ABORTED", 1, None),
+        ]
+    ):
+        workflow = base.model_copy(
+            update={
+                "id": name,
+                "version": 0,
+                "status": WorkflowStatus(status),
+                "created_at": world.clock.now() + timedelta(seconds=index),
+            }
+        )
+        active = await world.repo.active_workflow_id()
+        if active:
+            await world.repo.release_active(active)
+        await world.repo.create_workflow(workflow)
+        await store.save(
+            name,
+            "APP",
+            {
+                "observed": {"observedAt": stamp(world.clock.now() - timedelta(seconds=age))},
+                "desired": "RUN",
+                "generation": 0,
+                "actors": [],
+            },
+            world.clock.now(),
+            error=error,
+        )
+    async with await client_for(world, False) as client:
+        assert (await client.get("/v1/telemetry/workflows")).status_code == 401
+    async with await client_for(world) as client:
+        rows = (await client.get("/v1/telemetry/workflows")).json()
+        assert [row["id"] for row in rows] == ["halted-but-reporting", "live-two", "live-one"]
+        history = (await client.get("/v1/workflows")).json()
+        assert {"planned", "finished", "aborted", "stopped"}.issubset(
+            {row["id"] for row in history}
+        )
+        assert (await client.get("/v1/workflows/finished")).status_code == 200
+        world.clock.advance(seconds=60)
+        assert (await client.get("/v1/telemetry/workflows")).json() == []

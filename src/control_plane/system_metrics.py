@@ -21,6 +21,61 @@ Category = Literal["cpu", "memory", "disk", "network"]
 Window = Annotated[Literal[15, 60, 360], BeforeValidator(int)]
 
 
+@router.get("/deployments")
+async def live_deployments(
+    application_id: str, context: Context, request: Request, session: CurrentSession
+) -> dict[str, Any]:
+    if application_id != context.seed.application:
+        raise ApiError(404, "NOT_FOUND", "unknown application")
+    owner = org_id(str(session.user.id), application_id)
+    engine = service(request)
+    records = [
+        row
+        for row in await call(engine.store.environments)
+        if row["org_id"] == owner and row["status"] not in {"DESTROYING", "DESTROYED"}
+    ]
+    if not records:
+        return {"state": "OK", "environments": []}
+    selector = (
+        f"foxtrot_runtime_collection{{application_id={json.dumps(application_id)},"
+        f'foxtrot_owner_id={json.dumps(owner)},service_name="foxtrot-app-runtime"}}'
+    )
+    async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
+        state, payload = await read_backend(
+            http,
+            context.settings.prometheus_url,
+            "/api/v1/query",
+            {
+                "query": "max by (deployment_id, deployment_environment_name) "
+                f"(timestamp({selector}) > time() - 30)"
+            },
+        )
+    if state != "OK":
+        return {"state": state, "environments": []}
+    try:
+        if payload["status"] != "success" or payload["data"]["resultType"] != "vector":
+            raise ValueError("invalid backend result")
+        live = {
+            (row["metric"]["deployment_id"], row["metric"]["deployment_environment_name"])
+            for row in payload["data"]["result"]
+        }
+    except (KeyError, ValueError, TypeError):
+        return {"state": "UNAVAILABLE", "environments": []}
+    return {
+        "state": "OK",
+        "environments": [
+            {
+                "environmentId": row["id"],
+                "deploymentId": row["deployment_id"],
+                "cloud": row["cloud"],
+                "status": row["status"],
+            }
+            for row in records
+            if (row["deployment_id"], row["cloud"]) in live
+        ],
+    }
+
+
 async def scope(
     context: Context, request: Request, session: Any, application_id: str, deployment: str
 ) -> str:
@@ -160,7 +215,10 @@ async def instances(
                 or payload.get("data", {}).get("resultType") != "vector"
             ):
                 raise ValueError("invalid backend result")
-            for row in payload["data"]["result"][:64]:
+            ordered = sorted(
+                payload["data"]["result"], key=lambda row: float(row["value"][1]), reverse=True
+            )
+            for row in ordered[:64]:
                 name = row["metric"].get("service_instance_id")
                 at = float(row["value"][1])
                 if isinstance(name, str) and 0 < len(name) <= 128 and math.isfinite(at):
