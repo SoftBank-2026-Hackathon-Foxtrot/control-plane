@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, Response
 
 from control_plane.api.dependencies import CheckedSession, Context, CurrentSession, checked_change
 from control_plane.errors import ApiError
+from control_plane.onprem_plans import ONPREM_PREFIX
 
 router = APIRouter()
 APP_TEMPLATE = "chiikawa-groupbuy"
@@ -44,14 +45,16 @@ def service(request: Request) -> Any:
     return value
 
 
-def onprem_actor_counts(engine: Any, context: Any, payload: dict[str, Any]) -> None:
+def onprem_actor_counts(
+    engine: Any, context: Any, payload: dict[str, Any], *, plan_actors: dict[str, int] | None = None
+) -> None:
     node_id = payload.get("target", {}).get("nodeId")
     nodes = engine.config["clouds"]["onprem"].get("nodes", {})
     node = nodes.get(node_id) if isinstance(node_id, str) else None
     if not node or payload["org"]["id"] not in node.get("orgs", []):
         raise ApiError(404, "NOT_FOUND", "deployment target not found")
     target = context.seed.environments.get("onprem")
-    actors = target.actors if target else {}
+    actors = plan_actors if plan_actors is not None else (target.actors if target else {})
     api = node.get("apiEnvironment", {}).get("WORKLOAD_ACTOR")
     worker = node.get("workerEnvironment", {}).get("WORKLOAD_ACTOR")
     if not api or not worker or api == worker or api not in actors or worker not in actors:
@@ -101,17 +104,31 @@ async def deploy(
             raise ApiError(422, "INVALID_DEPLOYMENT", f"{field} must be an object")
     check_app_overrides(body)
     workflow_id = body.get("workflowId")
+    isolated_plan = False
     if workflow_id is not None:
         if not isinstance(workflow_id, str):
             raise ApiError(422, "INVALID_DEPLOYMENT", "workflowId must be a string")
-        workflow = await context.repo.workflow(workflow_id)
+        isolated_plan = workflow_id.startswith(ONPREM_PREFIX)
+        if isolated_plan:
+            if body.get("cloud") != "onprem":
+                raise ApiError(404, "NOT_FOUND", "workflow not found")
+            plan = await context.onprem_plans.get(workflow_id, session.user.id)
+            workflow = plan.workflow
+            if workflow.status.terminal:
+                raise ApiError(409, "INVALID_STATE", "the on-prem plan is closed")
+        else:
+            workflow = await context.repo.workflow(workflow_id)
         if workflow is None or workflow.application != application_id:
             raise ApiError(404, "NOT_FOUND", "workflow not found")
         owner = workflow.created_by
         if body.get("cloud") == "onprem":
             if workflow.target_env != "onprem":
                 raise ApiError(404, "NOT_FOUND", "workflow not found")
-            owner = workflow.created_by_id or workflow.created_by
+            owner = (
+                session.user.id
+                if isolated_plan
+                else (workflow.created_by_id or workflow.created_by)
+            )
         if owner != session.user.id:
             raise ApiError(404, "NOT_FOUND", "workflow not found")
     payload = dict(body)
@@ -126,7 +143,12 @@ async def deploy(
             )
         payload["app"]["image"] = image
         if workflow_id is not None:
-            onprem_actor_counts(engine, context, payload)
+            onprem_actor_counts(
+                engine,
+                context,
+                payload,
+                plan_actors=context.settings.onprem_actors if isolated_plan else None,
+            )
     key = request.headers.get("Idempotency-Key")
     if not key or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", key):
         raise ApiError(

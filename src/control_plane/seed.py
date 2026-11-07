@@ -37,7 +37,7 @@ class OnpremTargetUnconfirmed(ValueError):
 class Environment(Model):
     app_url: str
     traffic_pool: str
-    actors: dict[str, int]
+    actors: dict[str, int] = Field(min_length=1)
     """Actor id, as registered with the DB adapter, to the number of processes it runs."""
     resources: dict[ResourceKey, str] = Field(default_factory=dict)
     """This environment's resource refs (adapter keys). A workflow takes its source refs from its
@@ -353,11 +353,6 @@ class Seed(Model):
 
     @model_validator(mode="after")
     def unique_actors(self) -> Self:
-        for name, env in self.environments.items():
-            if not env.actors and name != "onprem":
-                raise ValueError(f"{name} must register workload actors")
-            if name == "onprem" and any(count < 1 for count in env.actors.values()):
-                raise ValueError("onprem actor counts must be positive")
         actors = [actor for env in self.environments.values() for actor in env.actors]
         if len(actors) != len(set(actors)):
             raise ValueError("actor ids must be unique across environments")

@@ -341,6 +341,9 @@ module "control_plane" {
       CONTROL_PLANE_ALLOWED_ORIGINS          = jsonencode([var.console_url])
       CONTROL_PLANE_GITHUB_CLIENT_ID         = var.github_client_id
       CONTROL_PLANE_GITHUB_ALLOWED_IDS       = jsonencode(var.github_allowed_ids)
+      }, var.onprem_planning ? {
+      CONTROL_PLANE_ONPREM_PLANNING = "true"
+      CONTROL_PLANE_ONPREM_ACTORS   = jsonencode(var.onprem_plan_actors)
       }, var.observability == null ? {} : {
       CONTROL_PLANE_PROMETHEUS_URL = var.observability.prometheus_url
       CONTROL_PLANE_TEMPO_URL      = var.observability.tempo_url

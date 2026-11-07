@@ -12,8 +12,8 @@ import pytest
 from control_plane.auth import AuthService, safe_return_path
 from control_plane.config import Settings
 from control_plane.domain.models import ActorState, ResourceKind
+from control_plane.errors import ApiError
 from control_plane.main import create_api
-from control_plane.seed import Environment
 from tests.conftest import SETTINGS, World
 
 ORIGIN = "https://platform.test"
@@ -257,20 +257,64 @@ async def test_creating_a_workflow_returns_the_whole_picture(console: Console) -
     assert detail["hold"]["desired"] == "RUN"
 
 
-async def test_console_can_select_and_plan_a_staged_onprem_target(console: Console) -> None:
-    console.world.seed.environments["onprem"] = Environment(
-        app_url="https://onprem.test", traffic_pool="onprem", actors={}
-    )
+@pytest.mark.parametrize("cloud_source,cloud_target", [("aws", "gcp"), ("gcp", "aws")])
+@pytest.mark.parametrize("cloud_first", [False, True])
+async def test_onprem_planning_is_independent_of_cloud_migrations(
+    console: Console, cloud_source: str, cloud_target: str, cloud_first: bool
+) -> None:
+    world = console.world
+    settings = world.platform.context.settings.model_copy(update={"onprem_planning": True})
+    object.__setattr__(world.platform.context, "settings", settings)
     await console.login()
     apps = (await console.http.get("/v1/applications")).json()
-    assert {env["name"] for env in apps[0]["environments"]} == {"aws", "gcp", "onprem"}
-    response = await console.http.post(
-        "/v1/workflows",
-        json={"sourceEnv": "aws", "targetEnv": "onprem"},
-        headers=console.change_headers(),
-    )
+    assert [env["name"] for env in apps[0]["environments"]] == ["aws", "gcp", "onprem"]
+    assert "onprem" not in world.seed.environments
+    hold_before = await world.repo.hold(world.seed.scope)
+
+    async def cloud() -> str:
+        result = await console.http.post(
+            "/v1/workflows",
+            json={"sourceEnv": cloud_source, "targetEnv": cloud_target},
+            headers=console.change_headers(),
+        )
+        assert result.status_code == 201
+        return str(result.json()["workflow"]["id"])
+
+    cloud_id = await cloud() if cloud_first else None
+    headers = console.change_headers()
+    args = {"json": {"sourceEnv": "aws", "targetEnv": "onprem"}, "headers": headers}
+    response = await console.http.post("/v1/workflows", **args)
     assert response.status_code == 201
-    assert response.json()["workflow"]["status"] == "PLANNED"
+    plan = response.json()
+    assert plan["workflow"]["status"] == "PLANNED" and plan["allowedCommands"] == ["ABORT"]
+    assert (await console.http.post("/v1/workflows", **args)).json() == plan
+    assert await world.repo.active_workflow_id() == cloud_id
+    cloud_id = cloud_id or await cloud()
+    wid = plan["workflow"]["id"]
+    assert await world.repo.workflow(wid) is None
+    assert {row["id"] for row in (await console.http.get("/v1/workflows")).json()} == {
+        wid,
+        cloud_id,
+    }
+    assert (await console.http.get(f"/v1/workflows/{wid}")).json() == plan
+    found = await console.http.get(f"/v1/workflows/{wid}/events")
+    assert found.json()["events"][0]["type"] == "WORKFLOW_CREATED"
+    assert (await console.http.get(f"/v1/workflows/{wid}/observations")).json()[
+        "observations"
+    ] == []
+    with pytest.raises(ApiError, match="on-prem plan not found"):
+        await world.platform.context.onprem_plans.get(wid, "another-user")
+    for action, code in (("APPROVE", 409), ("ABORT", 200)):
+        response = await console.http.post(
+            f"/v1/workflows/{wid}/commands",
+            json={"command": action, "expectedVersion": plan["workflow"]["version"]},
+            headers=console.change_headers(),
+        )
+        assert response.status_code == code
+    assert response.json()["workflow"]["status"] == "ABORTED"
+    assert await world.repo.active_workflow_id() == cloud_id
+    assert await world.repo.hold(world.seed.scope) == hold_before
+    assert (await world.run_to_end(cloud_id)).status.value == "COMPLETED"
 
 
 async def test_resource_details_expose_adapter_rollback_evidence(

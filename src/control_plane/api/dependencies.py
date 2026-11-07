@@ -14,6 +14,7 @@ from control_plane.clock import Clock
 from control_plane.config import Settings
 from control_plane.domain.models import Session
 from control_plane.errors import ApiError
+from control_plane.onprem_plans import OnpremPlans
 from control_plane.seed import Seed
 from control_plane.store.repository import Repository
 from control_plane.workflows import WorkflowService
@@ -31,6 +32,12 @@ class ApiContext:
     coordinator: WorkloadCoordinator
     workload_token: str
     observation_token: str = ""
+
+    @property
+    def onprem_plans(self) -> OnpremPlans:
+        return OnpremPlans(
+            self.repo.table, self.clock, self.seed.application, set(self.seed.environments)
+        )
 
     @property
     def session_cookie(self) -> str:

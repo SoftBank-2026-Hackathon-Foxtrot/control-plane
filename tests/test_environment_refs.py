@@ -159,36 +159,3 @@ async def test_onprem_refs_cannot_change_after_preflight_or_restart() -> None:
     stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
     assert stopped.halt and stopped.halt.code == "ONPREM_TARGET_UNCONFIRMED"
     assert not world.object.migrations
-
-
-@pytest.mark.parametrize("source,target", [("aws", "gcp"), ("gcp", "aws")])
-async def test_cloud_workflow_finishes_with_an_onprem_plan_target(source: str, target: str) -> None:
-    raw = with_onprem(environment_seed(), {})
-    raw["environments"]["onprem"]["actors"] = {}
-    world = World(seed=raw)
-    wf = await world.workflows.create(source_env=source, target_env=target, actor="tester")
-    assert (await world.run_to_end(wf.id)).status is WorkflowStatus.COMPLETED
-    assert await world.repo.latest_business_probe(wf.id, "onprem") is None
-    assert await world.repo.latency_buckets(wf.id, "onprem", since=wf.created_at) == []
-
-
-@pytest.mark.parametrize("source,target", [("aws", "onprem"), ("onprem", "aws")])
-async def test_onprem_plan_without_actors_stops_before_adapter_setup(
-    source: str, target: str
-) -> None:
-    raw = with_onprem(environment_seed(), {"object": "resource:onprem-receipts"})
-    raw["environments"]["onprem"]["actors"] = {}
-    world = World(seed=raw)
-    wf = await world.workflows.create(source_env=source, target_env=target, actor="tester")
-    assert wf.status is WorkflowStatus.PLANNED
-    await world.approve(wf.id)
-    stopped = await world.until(wf.id, WorkflowStatus.HALTED)
-    assert stopped.halt and stopped.halt.code == "ONPREM_ACTORS_REQUIRED"
-    assert not world.db.bindings and not any(a.migrations for a in world.adapters.values())
-
-
-def test_only_onprem_can_be_registered_without_running_actors() -> None:
-    raw = with_onprem(environment_seed(), {})
-    raw["environments"]["aws"]["actors"] = {}
-    with pytest.raises(ValidationError, match="aws must register workload actors"):
-        Seed.model_validate(raw)

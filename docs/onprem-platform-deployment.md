@@ -231,16 +231,15 @@ Idempotency-Key: goods-home-app-1
 같은 workload scope의 HOLD는 그 scope에 등록된 모든 actor를 기다린다. 공용 클라우드
 seed에 온프렘 actor를 추가하면 클라우드 간 전환도 그 actor의 응답을 기다린다. 데모를
 독립 운영할 때는 별도 앱 scope와 그 scope를 사용하는 바인딩을 구성한다.
-온프렘 준비·배포 API가 migration seed나 adapter resource를 자동 생성하지는 않는다.
+같은 애플리케이션 화면에서 온프렘 계획을 독립적으로 시연하려면 플랫폼에
+`CONTROL_PLANE_ONPREM_PLANNING=true`를 설정하고 공유 seed는 그대로 둔다.
+원본 또는 대상이 `onprem`인 새 요청은 온프렘 계획 백엔드가 처리한다. 계획과 이벤트는
+사용자별로 따로 저장되고 클라우드 이전 슬롯, HOLD, 어댑터, 트래픽을 사용하지 않는다.
+계획을 생성·조회·취소할 수 있다. 실행 어댑터가 연결될 때까지 계획 승인 명령은 제공하지 않는다.
+온프렘 앱 배포에 연결할 때는 독립 scope에서 사용할 프로세스 수를
+`CONTROL_PLANE_ONPREM_ACTORS` JSON으로 설정한다. 준비 API가 노드·데이터 대상 등록을 대신하지 않는다.
 
-온프렘 앱을 독립 DB로 띄워 두고 **계획만 먼저 등록**하려면 실제 `appUrl`과 전환 시 사용할
-`trafficPool`을 `environments.onprem`에 지정하고 `actors: {}`를 명시한다. 애플리케이션
-화면에서 `onprem`을 선택해 PLANNED 요청을 만들 수 있다. 이때 클라우드 간 이전의 HOLD와
-업무·지연 검사에는 온프렘이 참여하지 않는다. 이 설정은 **공유 DB·Redis·객체 경로를 쓰는
-온프렘 프로세스가 없을 때만** 사용한다. 온프렘 계획을 승인하면 PREPARE가
-`ONPREM_ACTORS_REQUIRED`로 중단된다. 실제 이전 전에 API·worker와 대상 리소스를 등록한다.
-
-온프렘을 출발지나 목적지로 선택하면 마이그레이션 PREPARE가 **모든 대상**을 먼저 검사한다.
+기존 실행용 seed를 사용하는 온프렘 마이그레이션의 PREPARE는 **모든 대상**을 먼저 검사한다.
 참조 방식은 양쪽 `environments.<이름>.resources`에 서로 다른 대상 참조가 있어야 한다.
 DB·Redis의 직접 접속 방식은 해당 요청의 `resources`에 명시한 source/target 쌍을 사용한다.
 설정이 불완전하면 `ONPREM_TARGET_UNCONFIRMED`로 멈춘다. 앱 배포에 연결할 PLANNED 요청은 미리 만들 수 있다.

@@ -103,12 +103,6 @@ class Prepare:
     @staticmethod
     async def _onprem_targets(ctx: StageContext) -> Stop | None:
         # Check the whole request before *any* adapter receives PREPARE or a binding.
-        node = ctx.seed.environments.get("onprem")
-        if node is None or not node.actors:
-            return Stop(
-                "ONPREM_ACTORS_REQUIRED",
-                "Register the on-prem API and worker in this scope before running the plan.",
-            )
         original = ctx.stage.data.get("onpremResourceRefs")
         refs: dict[str, list[str]] = {}
         for kind in ctx.seed.managed:
