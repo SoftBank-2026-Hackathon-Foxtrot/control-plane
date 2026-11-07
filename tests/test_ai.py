@@ -676,26 +676,6 @@ async def test_model_schema_restricts_evidence_to_existing_values() -> None:
     )
 
 
-async def test_local_playground_has_user_app_ui_and_no_deployment_actions(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from control_plane.ai import local
-
-    monkeypatch.setattr(local, "Settings", lambda **kwargs: Settings(**kwargs, _env_file=None))
-    app = local.create_app()
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
-    ) as client:
-        page = await client.get("/")
-        assert page.status_code == 200 and "Foxtrot AI" in page.text
-        assert "source-deployment" in page.text and "peak-rps" not in page.text
-        assert (await client.get("/playground/app.js")).status_code == 200
-        assert (await client.get("/v1/ai/deployments")).json()["deployments"] == []
-        assert (await client.get("/playground/context")).json()["environments"] == []
-        assert (await client.get("/v1/workflows")).status_code == 404
-        assert (await client.get("/v1/applications/goods/deployments")).status_code == 404
-
-
 async def test_new_target_uses_catalog_and_preserves_source_storage(
     console: Console, model: FakeModel
 ) -> None:

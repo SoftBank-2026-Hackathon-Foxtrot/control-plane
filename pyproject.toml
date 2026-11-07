@@ -23,7 +23,6 @@ dependencies = [
 
 [project.scripts]
 control-plane = "control_plane.main:run"
-control-plane-ai-local = "control_plane.ai.local:run"
 
 [dependency-groups]
 dev = [
@@ -47,7 +46,6 @@ packages = ["src/control_plane"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "infrastructure" = "control_plane/deployment/infrastructure"
-"config/seed.example.yaml" = "control_plane/ai/seed.example.yaml"
 
 [tool.ruff]
 target-version = "py313"
