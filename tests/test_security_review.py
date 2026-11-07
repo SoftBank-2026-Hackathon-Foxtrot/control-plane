@@ -18,7 +18,8 @@ CONFIG = ReviewConfig(
     aws_role="goods-app",
     aws_bucket="goods-aws",
     gcp_bucket="goods-gcp",
-    extra_bucket="goods-security-demo",
+    extra_bucket="foxtrot-security-demo-goods",
+    gcp_apply_credentials_ref="env:WRITER",
     gcp_principal="serviceAccount:goods@app-project.iam.gserviceaccount.com",
     mode="fixture",
     read_only=False,
@@ -196,7 +197,11 @@ def test_cloud_provider_uses_versioned_reads_and_only_writes_extra_bucket(monkey
     calls = []
     cfg = CONFIG.model_copy(update={"mode": "cloud"})
     cloud = CloudProvider(cfg, "ap-northeast-2")
-    monkeypatch.setattr(cloud, "_headers", lambda: {"Authorization": "test-token"})
+    monkeypatch.setattr(
+        cloud,
+        "_headers",
+        lambda **kw: {"Authorization": "writer-token" if kw.get("write") else "reader-token"},
+    )
 
     class Iam:
         def get_role_policy(self, **kwargs):
@@ -215,6 +220,7 @@ def test_cloud_provider_uses_versioned_reads_and_only_writes_extra_bucket(monkey
 
     def put(url, **kwargs):
         calls.append(("put", url))
+        assert kwargs["headers"] == {"Authorization": "writer-token"}
         policy = kwargs["json"]
         assert policy["etag"] == "extra-1" and policy["version"] == 3
         assert policy["bindings"][0]["members"] == [
@@ -223,6 +229,26 @@ def test_cloud_provider_uses_versioned_reads_and_only_writes_extra_bucket(monkey
         assert url.endswith(f"/{cfg.extra_bucket}/iam")
         return httpx.Response(200, json=policy, request=httpx.Request("PUT", url))
 
+    original_client = httpx.Client
+
+    def safety(request):
+        assert request.method == "GET"
+        assert request.headers["Authorization"] == "reader-token"
+        return httpx.Response(
+            200,
+            json={}
+            if request.url.path.endswith("/o")
+            else {
+                "labels": {"purpose": "foxtrot-security-demo"},
+                "iamConfiguration": {"publicAccessPrevention": "enforced"},
+            },
+        )
+
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kw: original_client(transport=httpx.MockTransport(safety), **kw),
+    )
     monkeypatch.setattr(module.httpx, "get", get)
     monkeypatch.setattr(module.httpx, "put", put)
     snapshot = cloud.collect()
@@ -304,7 +330,7 @@ def test_demo_setup_refuses_unsafe_existing_buckets(tmp_path, monkeypatch, unsaf
         prepare.main()
 
 
-async def test_read_only_review_collects_but_never_plans_or_applies(world: World) -> None:
+async def test_read_only_review_previews_plan_but_never_applies(world: World) -> None:
     config = CONFIG.model_copy(update={"read_only": True})
     provider = FixtureProvider(config)
     original = deepcopy(provider.data)
@@ -312,10 +338,11 @@ async def test_read_only_review_collects_but_never_plans_or_applies(world: World
     result = await run(review, "scan")
     assert result["phase"] == "gap" and result["readOnly"] is True
     assert len(result["checks"]) == 3
-    for action in ("plan", "apply"):
-        with pytest.raises(ApiError) as error:
-            await run(review, action)
-        assert error.value.code == "SECURITY_READ_ONLY"
+    plan = await run(review, "plan")
+    assert plan["plan"]["bucket"] == config.extra_bucket
+    with pytest.raises(ApiError) as error:
+        await run(review, "apply")
+    assert error.value.code == "SECURITY_READ_ONLY"
     assert provider.writes == 0 and provider.data == original
     assert await world.table.get("WORKFLOWS", "ACTIVE") is None
 
@@ -326,3 +353,104 @@ def test_cloud_provider_read_only_rejects_writes_before_network() -> None:
     config = CONFIG.model_copy(update={"read_only": True})
     with pytest.raises(ValueError, match="read-only"):
         CloudProvider(config, "ap-northeast-2").apply({})
+
+
+@pytest.mark.parametrize("bucket", ["target", "extra"])
+@pytest.mark.parametrize("principal", ["allUsers", "allAuthenticatedUsers"])
+async def test_public_bindings_require_review_and_cannot_be_applied(world, bucket, principal):
+    review, provider = setup(world)
+    provider.data[bucket]["bindings"].append(
+        {"role": "roles/storage.objectViewer", "members": [principal]}
+    )
+    result = await run(review, "scan")
+    assert result["phase"] == "unknown"
+    with pytest.raises(ApiError):
+        await run(review, "plan")
+    assert provider.writes == 0
+
+
+async def test_failed_scan_does_not_display_previous_passes(world):
+    review, provider = setup(world)
+    provider.data["extra"]["bindings"] = []
+    passed = await run(review, "scan")
+    assert all(c["status"] == "pass" for c in passed["checks"])
+
+    def fail():
+        raise RuntimeError("unavailable")
+
+    provider.collect = fail
+    result = await run(review, "scan")
+    assert result["phase"] == "error"
+    assert all(c["status"] == "unknown" for c in result["checks"])
+    assert result["collectedAt"] == passed["collectedAt"]
+
+
+async def test_apply_rechecks_app_and_expired_plans(world):
+    review, provider = setup(world)
+    await run(review, "scan")
+    await run(review, "plan")
+    world.clock.advance(601)
+    with pytest.raises(ApiError) as error:
+        await run(review, "apply")
+    assert error.value.code == "PLAN_STALE"
+    await run(review, "scan")
+    await run(review, "plan")
+
+    async def unavailable():
+        return False
+
+    review.probe = unavailable
+    result = await run(review, "apply")
+    assert result["phase"] == "error"
+    assert provider.writes == 0
+
+
+@pytest.mark.parametrize("unsafe", ["nonempty", "unlabelled", "public"])
+def test_cloud_apply_rechecks_demo_bucket_before_any_write(monkeypatch, unsafe):
+    import httpx
+
+    from control_plane.security_review import provider as module
+
+    cloud = module.CloudProvider(CONFIG, "ap-northeast-2")
+    monkeypatch.setattr(cloud, "_headers", lambda **kw: {})
+    original_client = httpx.Client
+
+    def handle(request):
+        assert request.method == "GET"
+        if request.url.path.endswith("/o"):
+            return httpx.Response(200, json={"items": [{}]} if unsafe == "nonempty" else {})
+        return httpx.Response(
+            200,
+            json={
+                "labels": {} if unsafe == "unlabelled" else {"purpose": "foxtrot-security-demo"},
+                "iamConfiguration": {
+                    "publicAccessPrevention": "inherited" if unsafe == "public" else "enforced"
+                },
+            },
+        )
+
+    monkeypatch.setattr(
+        module.httpx,
+        "Client",
+        lambda **kw: original_client(transport=httpx.MockTransport(handle), **kw),
+    )
+    monkeypatch.setattr(module.httpx, "put", lambda *a, **kw: pytest.fail("unsafe write"))
+    with pytest.raises(ValueError):
+        cloud.apply({})
+
+
+def test_read_only_prepare_stops_before_credentials_or_network(tmp_path, monkeypatch):
+    import sys
+
+    from control_plane.security_review import prepare
+
+    cfg = CONFIG.model_copy(update={"mode": "cloud", "read_only": True})
+    path = tmp_path / "readonly.json"
+    path.write_text(cfg.model_dump_json(by_alias=True))
+    monkeypatch.setattr(sys, "argv", ["prepare", "--config", str(path), "--project", "test"])
+    monkeypatch.setattr(
+        prepare.CloudProvider, "_headers", lambda *a: pytest.fail("credentials requested")
+    )
+    with pytest.raises(SystemExit) as error:
+        prepare.main()
+    assert error.value.code == 2

@@ -1,0 +1,8 @@
+{
+  "security_review": {
+    "config_json": "{\"application\": \"chiikawa\", \"allowedUserIds\": [\"github:121543941\"], \"awsRole\": \"chiikawa-aws-3e3d-app\", \"awsBucket\": \"foxtrot-chiikawa-aws-3e3d\", \"gcpBucket\": \"foxtrot-chiikawa-gcp-1975\", \"extraBucket\": \"foxtrot-security-demo-513413\", \"gcpPrincipal\": \"serviceAccount:chiikawa-gcp-1975-app@foxtrot-513413.iam.gserviceaccount.com\", \"gcpCredentialsRef\": \"env:SECURITY_GCP_CREDENTIALS\", \"mode\": \"cloud\", \"readOnly\": false, \"gcpApplyCredentialsRef\": \"env:SECURITY_GCP_APPLY_CREDENTIALS\"}",
+    "aws_role_arn": "arn:aws:iam::952561150367:role/chiikawa-aws-3e3d-app",
+    "reader_secret_arn": "arn:aws:secretsmanager:ap-northeast-2:952561150367:secret:foxtrot/platform/gcp-security-reader-credentials-DETF5H",
+    "writer_secret_arn": "arn:aws:secretsmanager:ap-northeast-2:952561150367:secret:foxtrot/platform/gcp-security-writer-credentials-IB3Hif"
+  }
+}
