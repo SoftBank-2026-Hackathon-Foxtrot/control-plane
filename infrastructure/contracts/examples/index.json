@@ -1,0 +1,38 @@
+[
+  {
+    "file": "examples/aws-context-response.json",
+    "schema": "Context"
+  },
+  {
+    "file": "examples/aws-plan-request.json",
+    "schema": "PlanRequest"
+  },
+  {
+    "file": "examples/aws-handoff-response.json",
+    "schema": "Handoff"
+  },
+  {
+    "file": "examples/gcp-context-response.json",
+    "schema": "Context"
+  },
+  {
+    "file": "examples/gcp-plan-request.json",
+    "schema": "PlanRequest"
+  },
+  {
+    "file": "examples/gcp-handoff-response.json",
+    "schema": "Handoff"
+  },
+  {
+    "file": "examples/plan-job-response.json",
+    "schema": "Job"
+  },
+  {
+    "file": "examples/apply-job-response.json",
+    "schema": "Job"
+  },
+  {
+    "file": "examples/stale-plan-error.json",
+    "schema": "Error"
+  }
+]

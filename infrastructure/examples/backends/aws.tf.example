@@ -1,0 +1,9 @@
+terraform {
+  backend "s3" {
+    bucket       = "replace-with-existing-state-bucket"
+    key          = "foxtrot/aws/replace-deployment-id/terraform.tfstate"
+    region       = "ap-northeast-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

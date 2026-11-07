@@ -1,0 +1,188 @@
+openapi: 3.0.3
+info:
+  title: Foxtrot on-prem preparation API
+  version: 0.1.0
+  description: Additive v2 endpoints. Existing AWS/GCP v1 requests and handoffs are unchanged. One controller worker per journal.
+security:
+  - bearer: []
+paths:
+  /v2/environments:
+    post:
+      operationId: createOnPremEnvironment
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Create'}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+    get:
+      operationId: listOnPremEnvironments
+      responses:
+        '200':
+          description: Registered environments; no resolved secrets or raw Ansible output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  environments:
+                    type: array
+                    items: {$ref: '#/components/schemas/Environment'}
+  /v2/environments/{environmentId}:
+    parameters:
+      - $ref: '#/components/parameters/EnvironmentId'
+    get:
+      operationId: getOnPremEnvironment
+      responses:
+        '200':
+          description: Separate infrastructure and application readiness with observed timestamps
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Environment'}
+        '404': {$ref: '#/components/responses/Error'}
+  /v2/environments/{environmentId}/{action}:
+    parameters:
+      - $ref: '#/components/parameters/EnvironmentId'
+      - name: action
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [plan, apply, check-app, reconcile, workflow]
+    post:
+      operationId: commandOnPremEnvironment
+      description: |
+        All commands require expectedRevision and Idempotency-Key. plan optionally accepts
+        intent (prepare or cleanup). apply requires the current unexpired planId. workflow
+        requires workflowId and is immutable once bound. Other command fields are rejected.
+        cleanup retains data, credentials and host reservation, and is blocked for workflow-bound hosts.
+        RECONCILE observes actual services without replaying an interrupted mutation.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Command'}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        '400': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+  /v2/jobs/{jobId}:
+    parameters:
+      - name: jobId
+        in: path
+        required: true
+        schema: {type: string, pattern: '^job-[a-f0-9]{12}$'}
+    get:
+      operationId: getOnPremJob
+      responses:
+        '200':
+          description: Stage, host, start/finish timestamps and safe error code; no secret/raw log fields
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Job'}
+        '404': {$ref: '#/components/responses/Error'}
+components:
+  securitySchemes:
+    bearer: {type: http, scheme: bearer}
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, pattern: '^[A-Za-z0-9_.:-]{1,128}$'}
+    EnvironmentId:
+      name: environmentId
+      in: path
+      required: true
+      schema: {type: string, pattern: '^env-[a-f0-9]{12}$'}
+  responses:
+    Accepted:
+      description: Durable job accepted; workflow binding returns no jobId
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [environmentId, status, revision]
+            properties:
+              environmentId: {type: string}
+              jobId: {type: string}
+              status: {type: string}
+              revision: {type: integer}
+    Error:
+      description: Invalid input, stale revision/plan, reserved host, or unavailable operation
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code, message]
+            properties:
+              code: {type: string}
+              message: {type: string}
+  schemas:
+    Create:
+      type: object
+      additionalProperties: false
+      required: [org, target, driver, profileRef]
+      properties:
+        org: {type: string, pattern: '^[a-z][a-z0-9-]{1,30}[a-z0-9]$'}
+        driver: {type: string, enum: [ansible]}
+        target:
+          type: object
+          additionalProperties: false
+          required: [kind, siteRef, inventoryRef]
+          properties:
+            kind: {type: string, enum: [onprem]}
+            siteRef: {type: string}
+            inventoryRef: {type: string}
+        profileRef: {type: string}
+        appBindingRef: {type: string}
+        workflowId: {type: string, nullable: true}
+        mode: {type: string, enum: [plan, apply], default: plan}
+    Command:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision]
+      properties:
+        expectedRevision: {type: integer, minimum: 1}
+        planId: {type: string}
+        intent: {type: string, enum: [prepare, cleanup]}
+        workflowId: {type: string}
+    Environment:
+      type: object
+      required: [environmentId, status, revision, driver, target, readiness]
+      properties:
+        environmentId: {type: string}
+        revision: {type: integer}
+        driver: {type: string, enum: [ansible]}
+        target: {type: object}
+        status:
+          type: string
+          enum: [REGISTERED, PLANNING, PLANNED, APPLYING, INFRA_READY, VERIFYING_APP, READY, APP_NOT_READY, FAILED, NEEDS_RECONCILIATION, RECONCILING, RELEASING, RELEASED]
+        plan: {type: object, nullable: true}
+        handoff: {type: object, nullable: true, description: 'schemaVersion=2, endpoint and credential references, LOCAL_ONLY or REGISTERED_CONNECTIONS network scope, pending migration checks'}
+        readiness:
+          type: object
+          required: [infrastructure, application]
+          properties:
+            infrastructure: {type: object}
+            application: {type: object}
+    Job:
+      type: object
+      required: [jobId, environmentId, kind, status, createdAt]
+      properties:
+        jobId: {type: string}
+        environmentId: {type: string}
+        kind: {type: string, enum: [PLAN, PLAN_APPLY, APPLY, CHECK_APP, RECONCILE]}
+        status: {type: string, enum: [QUEUED, RUNNING, SUCCEEDED, FAILED, NEEDS_RECONCILIATION]}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time, nullable: true}
+        finishedAt: {type: string, format: date-time, nullable: true}
+        progress: {type: object}
+        error: {type: object, nullable: true}

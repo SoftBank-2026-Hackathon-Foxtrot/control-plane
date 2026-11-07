@@ -1,0 +1,61 @@
+{
+  "migration_id": "mig_to_aws",
+  "target": {
+    "id": "env_aws_target",
+    "cloud": "aws"
+  },
+  "readiness": "INFRA_APPLIED",
+  "outputs": {
+    "schema_version": 1,
+    "cloud": "aws",
+    "deployment_id": "fox-aws-poc01",
+    "metadata": {
+      "project": "foxtrot",
+      "environment": "poc",
+      "owner": "platform-team",
+      "cost_center": "hackathon",
+      "workload": "web",
+      "migration_id": "mig-001",
+      "data_class": "internal",
+      "expires_on": "2026-12-01",
+      "managed_by": "terraform",
+      "template_version": "v0-1",
+      "security_profile": "public-app-private-data-v1"
+    },
+    "compute": {
+      "id": "example-vm-id",
+      "public_ip": "192.0.2.10",
+      "private_ip": "10.20.0.10",
+      "identity": "example-workload-identity"
+    },
+    "database": {
+      "id": "example-db-id",
+      "host": "example.private",
+      "port": 5432,
+      "name": "app",
+      "tls_required": true,
+      "admin_secret_ref": "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:example"
+    },
+    "cache": {
+      "id": "example-cache-id",
+      "host": "example.redis.private",
+      "port": 6379,
+      "tls_required": true,
+      "auth_source": "external-secret-injection"
+    },
+    "storage": {
+      "id": "example-storage-id",
+      "name": "example-bucket"
+    },
+    "network": {
+      "id": "example-network-id",
+      "app_security_group_id": "sg-example"
+    },
+    "pending_checks": [
+      "application-deployment",
+      "database-grants-and-schema",
+      "replication-connectivity",
+      "application-smoke-test"
+    ]
+  }
+}

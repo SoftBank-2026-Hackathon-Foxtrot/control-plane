@@ -1,0 +1,12 @@
+{
+  "targetRef": "resource:gcp-demo-web",
+  "sourceRef": "resource:aws-demo-web",
+  "workloadScopeRef": "workload:demo-web",
+  "bindingRef": "binding:demo-web-entry",
+  "imageId": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "configVersion": "demo-web-config-v1",
+  "envFile": "web.env",
+  "command": ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--timeout-keep-alive", "120", "--ws-max-size", "4096"],
+  "port": 8000,
+  "readinessPath": "/readyz"
+}

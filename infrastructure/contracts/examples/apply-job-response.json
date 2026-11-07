@@ -1,0 +1,9 @@
+{
+  "id": "job_apply_001",
+  "migration_id": "mig_to_gcp",
+  "type": "APPLY",
+  "status": "RUNNING",
+  "message": "검토한 계획을 실행 중입니다.",
+  "result": null,
+  "error": null
+}

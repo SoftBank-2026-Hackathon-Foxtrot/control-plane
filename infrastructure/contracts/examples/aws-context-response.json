@@ -1,0 +1,76 @@
+{
+  "migration_id": "mig_to_aws",
+  "source": {
+    "id": "env_gcp_source",
+    "cloud": "gcp"
+  },
+  "target": {
+    "id": "env_aws_target",
+    "cloud": "aws"
+  },
+  "target_sizing": {
+    "compute_instance_type": "t3.small",
+    "compute_disk_gib": 30,
+    "db_instance_class": "db.t3.micro",
+    "db_storage_gib": 20,
+    "db_max_storage_gib": 100,
+    "db_multi_az": false,
+    "cache_node_type": "cache.t3.micro",
+    "cache_node_count": 1
+  },
+  "sizing_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "compute_instance_type": {
+        "type": "string",
+        "enum": [
+          "t3.small",
+          "t3.medium",
+          "m6i.large"
+        ]
+      },
+      "compute_disk_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_instance_class": {
+        "type": "string",
+        "enum": [
+          "db.t3.micro",
+          "db.t3.small",
+          "db.m6g.large"
+        ]
+      },
+      "db_storage_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_max_storage_gib": {
+        "type": "integer",
+        "minimum": 22,
+        "maximum": 500
+      },
+      "db_multi_az": {
+        "type": "boolean"
+      },
+      "cache_node_type": {
+        "type": "string",
+        "enum": [
+          "cache.t3.micro",
+          "cache.t3.small",
+          "cache.m6g.large"
+        ]
+      },
+      "cache_node_count": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3
+      }
+    },
+    "required": []
+  }
+}

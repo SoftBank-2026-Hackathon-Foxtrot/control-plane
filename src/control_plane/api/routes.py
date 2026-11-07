@@ -247,11 +247,6 @@ async def workflow_command(
     )
 
 
-@router.api_route("/v1/provisioning/{path:path}", methods=["GET", "POST"], include_in_schema=False)
-async def provisioning(_: CurrentSession, path: str) -> None:
-    raise ApiError(501, "NOT_IMPLEMENTED", f"provisioning is reserved, not built: {path}")
-
-
 # ---- called by the application's own processes -------------------------------------------------
 @router.post(
     "/internal/v1/workloads/{scope}/heartbeat",

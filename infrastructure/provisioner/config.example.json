@@ -1,0 +1,129 @@
+{
+  "workRoot": "/var/lib/foxtrot-provisioner",
+  "stateBackend": null,
+  "deletionProtection": false,
+  "forceDestroyStorage": true,
+  "expiresInDays": 30,
+  "clouds": {
+    "aws": {
+      "accounts": [
+        "123456789012"
+      ],
+      "region": "ap-northeast-2",
+      "regions": [
+        "ap-northeast-2"
+      ],
+      "images": {
+        "chiikawa-groupbuy": "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/chiikawa-groupbuy:latest"
+      },
+      "imagePrefixes": [
+        "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/"
+      ],
+      "baseline": {
+        "web_ingress_cidrs": [
+          "0.0.0.0/0"
+        ],
+        "web_ports": [
+          80
+        ],
+        "admin_cidrs": [],
+        "network": {
+          "vpc_cidr": "10.10.0.0/16",
+          "public_subnet_cidr": "10.10.0.0/24",
+          "private_subnet_cidrs": [
+            "10.10.10.0/24",
+            "10.10.11.0/24"
+          ],
+          "availability_zones": [
+            "ap-northeast-2a",
+            "ap-northeast-2c"
+          ]
+        },
+        "sizing": {
+          "compute_instance_type": "t3.medium",
+          "compute_disk_gib": 30,
+          "db_instance_class": "db.t3.micro",
+          "db_storage_gib": 20,
+          "db_max_storage_gib": 100,
+          "db_multi_az": false,
+          "cache_node_type": "cache.t3.micro",
+          "cache_node_count": 1
+        }
+      }
+    },
+    "gcp": {
+      "projects": [
+        "replace-with-project-id"
+      ],
+      "region": "asia-northeast3",
+      "regions": [
+        "asia-northeast3"
+      ],
+      "zone": "asia-northeast3-a",
+      "images": {
+        "chiikawa-groupbuy": "asia-northeast3-docker.pkg.dev/replace-with-project-id/apps/chiikawa-groupbuy:latest"
+      },
+      "imagePrefixes": [
+        "asia-northeast3-docker.pkg.dev/replace-with-project-id/"
+      ],
+      "baseline": {
+        "web_ingress_cidrs": [
+          "0.0.0.0/0"
+        ],
+        "web_ports": [
+          80
+        ],
+        "admin_cidrs": [],
+        "network": {
+          "subnet_cidr": "10.20.0.0/24",
+          "service_range_address": "10.21.0.0",
+          "service_range_prefix": 16
+        },
+        "sizing": {
+          "compute_machine_type": "e2-medium",
+          "compute_disk_gib": 30,
+          "db_tier": "db-custom-1-3840",
+          "db_storage_gib": 20,
+          "db_max_storage_gib": 100,
+          "db_high_availability": false,
+          "cache_memory_gib": 1,
+          "cache_high_availability": false
+        }
+      }
+    },
+    "onprem": {
+      "images": {
+        "chiikawa-groupbuy": "registry.internal/apps/chiikawa-groupbuy:latest"
+      },
+      "nodes": {
+        "lab": {
+          "dockerHost": "ssh://deployer@node.internal",
+          "network": "foxtrot",
+          "bindAddress": "127.0.0.1",
+          "appUrl": "http://node.internal",
+          "imagePrefixes": [
+            "registry.internal/apps/"
+          ],
+          "environment": {
+            "DATABASE_URL": "postgresql+psycopg://app_writer:__APP_DB_PASSWORD__@postgres:5432/app",
+            "DB_ADMIN_HOST": "postgres",
+            "DB_ADMIN_PORT": "5432",
+            "DB_ADMIN_USER": "postgres",
+            "DB_ADMIN_DATABASE": "app",
+            "DB_APP_ROLE": "app_writer",
+            "REDIS_URL": "redis://redis:6379"
+          },
+          "secretEnv": {
+            "APP_DB_PASSWORD": "ONPREM_APP_DB_PASSWORD",
+            "DB_ADMIN_PASSWORD": "ONPREM_DB_ADMIN_PASSWORD"
+          }
+        }
+      }
+    }
+  },
+  "readiness": {
+    "deadlineSeconds": 180,
+    "intervalSeconds": 5,
+    "requestTimeoutSeconds": 3
+  }
+}

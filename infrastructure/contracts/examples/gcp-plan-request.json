@@ -1,0 +1,5 @@
+{
+  "overrides": {
+    "compute_machine_type": "e2-medium"
+  }
+}

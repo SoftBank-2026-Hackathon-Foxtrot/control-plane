@@ -9,3 +9,25 @@ build/
 *.egg-info/
 .env
 config/seed.yaml
+
+# Terraform runtime data belongs to the deployment work directory.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!*.example.tfvars.json
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+infrastructure/provisioner/config.json
+infrastructure/observability/.env
+
+**/.onprem-local

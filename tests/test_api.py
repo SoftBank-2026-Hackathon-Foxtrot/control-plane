@@ -446,11 +446,11 @@ async def test_applications_come_from_the_seed(console: Console) -> None:
     assert {env["name"] for env in application["environments"]} == {"aws", "gcp"}
 
 
-async def test_provisioning_is_reserved(console: Console) -> None:
+async def test_provisioning_requires_configuration(console: Console) -> None:
     await console.login()
     response = await console.http.get("/v1/provisioning/migrations/wf-1")
-    assert response.status_code == 501
-    assert response.json()["code"] == "NOT_IMPLEMENTED"
+    assert response.status_code == 503
+    assert response.json()["code"] == "DEPLOYMENT_NOT_CONFIGURED"
 
 
 async def test_heartbeat_needs_the_workload_token_and_known_names(console: Console) -> None:

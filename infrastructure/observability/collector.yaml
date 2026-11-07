@@ -1,0 +1,69 @@
+extensions:
+  bearertokenauth/modules:
+    token: ${env:OTEL_INGEST_TOKEN}
+  file_storage:
+    directory: /var/lib/otelcol
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        auth:
+          authenticator: bearertokenauth/modules
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  filter/snapshots:
+    error_mode: ignore
+    logs:
+      log_record:
+        - 'attributes["foxtrot.event"] != "snapshot"'
+  batch:
+    timeout: 1s
+    send_batch_size: 16
+    send_batch_max_size: 24
+exporters:
+  otlp_http/control_plane:
+    logs_endpoint: ${env:CONTROL_PLANE_OTLP_LOGS_ENDPOINT}
+    headers:
+      Authorization: Bearer ${env:OBSERVATION_TOKEN}
+    compression: none
+    timeout: 5s
+    sending_queue:
+      enabled: true
+      queue_size: 256
+      storage: file_storage
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 5m
+  otlp_http/prometheus:
+    endpoint: http://prometheus:9090/api/v1/otlp
+    sending_queue:
+      enabled: true
+      queue_size: 256
+    retry_on_failure:
+      max_elapsed_time: 1m
+  otlp_http/tempo:
+    endpoint: http://tempo:4318
+    sending_queue:
+      enabled: true
+      queue_size: 256
+    retry_on_failure:
+      max_elapsed_time: 1m
+service:
+  extensions: [bearertokenauth/modules, file_storage]
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/snapshots, batch]
+      exporters: [otlp_http/control_plane]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/tempo]

@@ -1,0 +1,9 @@
+{
+  "cloud": "aws",
+  "parameters": {
+    "compute_disk_gib": 40
+  },
+  "rationale": {
+    "compute_disk_gib": "예시: 이미지와 로그 공간을 고려한 제안. 실제 사용량 확인 후 승인 필요."
+  }
+}

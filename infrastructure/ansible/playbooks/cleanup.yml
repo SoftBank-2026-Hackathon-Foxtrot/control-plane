@@ -1,0 +1,23 @@
+- name: Stop only owned services and retain data
+  hosts: foxtrot
+  gather_facts: false
+  tasks:
+    - name: Verify host ownership before stopping services
+      ansible.builtin.script:
+        cmd: "../files/host_guard.py inspect {{ foxtrot_environment_id }} {{ foxtrot_host_id }} {{ foxtrot_config_digest }} --root {{ foxtrot_base | quote }}"
+        executable: python3
+      register: evidence
+      changed_when: false
+    - name: Require an owned environment
+      ansible.builtin.assert:
+        that: (evidence.stdout | from_json).configurationMatches
+        quiet: true
+    - name: Stop owned Compose services without deleting volumes or data
+      ansible.builtin.command:
+        argv: [docker, compose, -f, '{{ foxtrot_root }}/compose.json', down]
+      when: foxtrot_services | length > 0
+      no_log: true
+    - name: Record retained-data release
+      ansible.builtin.script:
+        cmd: "../files/host_guard.py release {{ foxtrot_environment_id }} {{ foxtrot_host_id }} {{ foxtrot_config_digest }} --root {{ foxtrot_base | quote }}"
+        executable: python3
