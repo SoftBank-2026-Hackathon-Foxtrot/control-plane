@@ -71,3 +71,12 @@ POST /api/logout
 - `probe.groupbuyId`의 상품은 검사 전용으로 두고 재고를 충분히 넣습니다. `SOLD_OUT`은 검사 실패로 처리합니다.
 - `probe.cleanupPath`는 시험 주문을 정리하는 내부 경로입니다. 본문은 `{"requestId": "..."}`이고 `X-Session` 헤더로 검사 계정의 세션을 보냅니다. 앱은 검사 계정의 주문만 정리해야 합니다. 설정하지 않으면 시험 데이터가 남습니다.
 - 사용자당 요청 제한(`RL_LIMIT`)에 걸리지 않도록 검사 계정은 제외하거나 충분한 값을 둡니다.
+
+
+## 이미 실행 중인 관리 앱의 이미지 보고
+
+개인 workspace에 고정 이미지로 앱을 등록한 경우 heartbeat에 `imageRef`를 포함합니다. 모든 API·Worker 프로세스가 실제 배포한 digest를 보고해야 합니다. 대상의 예상 프로세스 수, generation, 보고 만료 시간도 함께 검사합니다.
+
+플랫폼의 ECS·Docker 실행기는 `FOXTROT_IMAGE_REF` 환경 변수에 고정 이미지 주소를 주입합니다. 이미 실행 중인 환경은 관리자가 같은 값을 설정해야 합니다. 기존 heartbeat는 `imageRef` 없이도 업무 제어에 사용할 수 있지만, 이미지 실행 근거로는 사용할 수 없습니다.
+
+추가 workload scope는 `CONTROL_PLANE_WORKLOAD_TOKEN_SECRETS`에 별도 토큰을 할당합니다. 토큰은 브라우저에 전달하지 않습니다. 이미지 보고는 관리 프로세스의 선언이며 provider가 증명한 이미지 검사와는 구분합니다.

@@ -24,3 +24,10 @@ run:
 
 image-build:
 	docker build -t foxtrot/control-plane:local .
+
+.PHONY: local-run local-test
+local-run:
+	uv run --locked python dev/run_local.py
+
+local-test:
+	CONTROL_PLANE_TEST_DYNAMODB_URL=http://127.0.0.1:18005 uv run --locked pytest tests/integration/test_local_platform.py -q

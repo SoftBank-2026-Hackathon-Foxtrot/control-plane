@@ -39,7 +39,15 @@ src/control_plane/
 5. **모르면 멈춥니다.** 결과가 불명이면 RECONCILE 전까지 다음 변경을 보내지 않습니다. 자동으로 실행하는 되돌리기는 데이터 경로를 바꾸지 않는 트래픽 가중치뿐입니다.
 6. **시간은 `Clock`으로만 읽습니다.** 그래서 시간 관련 동작을 실제로 기다리지 않고 시험합니다.
 
-## 로컬 실행
+## 개인 앱 관리
+
+고정 Docker 이미지 등록·개인 소유권·환경 연결·정책·대상 앱 기동을 추가했습니다. 빌드·CI/CD·Webhook은 없습니다. [API 사용과 로컬 실행](docs/personal-platform.md), [검증 결과](docs/local-validation.md)를 참고하세요.
+
+```bash
+make local-run
+```
+
+## 기존 환경 설정으로 실행
 
 요구 사항은 [uv](https://docs.astral.sh/uv/)입니다. Python 3.13은 uv가 설치합니다.
 
