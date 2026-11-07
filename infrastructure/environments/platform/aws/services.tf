@@ -346,6 +346,8 @@ module "control_plane" {
       DB_ADAPTER_TOKEN      = local.control_db_token
       REDIS_ADAPTER_TOKEN   = local.control_redis_token
       OBJECT_ADAPTER_TOKEN  = local.secret_arn["object-adapter-token"]
+      }, var.onprem_bundle_secret_arn == null ? {} : {
+      PROVISIONER_ONPREM_BUNDLE = var.onprem_bundle_secret_arn
     })
     mounts = { work = "/var/lib/foxtrot-provisioner" }
     health = ["python -c \"import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=2)\""]

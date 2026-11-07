@@ -10,8 +10,10 @@ from pathlib import Path
 import pytest
 
 from control_plane.deployment.api import APP_TEMPLATE, org_id
+from control_plane.deployment.provisioner.node_config import resolve
 from control_plane.deployment.provisioner.service import Service
 from control_plane.deployment.provisioner.store import Store
+from tests.deployment.test_node import node_config as node_config  # pytest fixture
 from tests.deployment.test_provisioner import CATALOG, CONFIG, FakeTerraform, ReadyChecker
 from tests.test_api import Console
 from tests.test_api import console as console
@@ -20,7 +22,9 @@ DEPLOY = "/v1/applications/goods/deployments"
 
 
 @pytest.fixture
-async def deployment_console(console: Console, tmp_path: Path) -> AsyncIterator[Console]:
+async def deployment_console(
+    console: Console, tmp_path: Path, node_config: dict
+) -> AsyncIterator[Console]:
     engine = Service(
         Store(tmp_path / "provisioner.db"),
         FakeTerraform(tmp_path),
@@ -28,6 +32,11 @@ async def deployment_console(console: Console, tmp_path: Path) -> AsyncIterator[
         copy.deepcopy(CONFIG),
         checker=ReadyChecker(),
     )
+    node = node_config["clouds"]["onprem"]["nodes"]["pc"]
+    node["orgs"] = [org_id("github:4242", "goods")]
+    node["imagePrefixes"] = ["registry.internal/apps/"]
+    engine.config["clouds"]["onprem"]["nodes"] = {"lab": node}
+    engine.tf.resolve = lambda spec: resolve(engine.config["clouds"]["onprem"]["nodes"], spec)
     console.app.state.deployment_service = engine
     await console.login()
     yield console
@@ -59,6 +68,27 @@ async def test_registration_removed_and_old_registration_not_listed(
     )
     assert response.status_code == 405
     assert await console.world.table.get("USER#github:4242", "APPLICATION#new-app") is None
+
+
+@pytest.mark.parametrize("action", ["reconcile", "destroy"])
+async def test_onprem_recovery_does_not_mutate_cloud_deployments(deployment_console, action):
+    console = deployment_console
+    engine = console.app.state.deployment_service
+    created = await console.http.post(
+        DEPLOY, json={"cloud": "aws"}, headers=console.change_headers()
+    )
+    drain(engine)
+    env_id = created.json()["environmentId"]
+    before = engine.store.environment(env_id)
+    calls = list(engine.tf.calls)
+    response = await console.http.post(
+        f"/v1/provisioning/environments/{env_id}/{action}",
+        json={},
+        headers=console.change_headers(),
+    )
+    assert response.status_code == 422
+    assert engine.tf.calls == calls
+    assert engine.store.environment(env_id) == before
 
 
 @pytest.mark.parametrize("cloud", ["aws", "gcp", "onprem"])

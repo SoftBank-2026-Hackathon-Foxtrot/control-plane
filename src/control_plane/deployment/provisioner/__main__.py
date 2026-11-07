@@ -39,6 +39,10 @@ def load(path: str | None) -> tuple[dict, dict]:
 
 
 def build(config: dict, catalog: dict) -> Service:
+    if raw := os.environ.get("PROVISIONER_ONPREM_BUNDLE"):
+        from .node_bundle import install
+
+        config = install(config, raw)
     work = Path(config["workRoot"])
     work.mkdir(parents=True, exist_ok=True)
     if cache := os.environ.get("TF_PLUGIN_CACHE_DIR"):
@@ -80,7 +84,9 @@ def build(config: dict, catalog: dict) -> Service:
             inventory,
             AnsibleDriver(HERE.parent, work / "ansible", inventory),
             service.checker,
+            app_store=service.store,
         )
+        executor.preparations = service.onprem
     return service
 
 

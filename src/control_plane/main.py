@@ -251,7 +251,9 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     app.state.context = platform.context
     app.state.deployment_service = platform.deployment_service
     from control_plane.deployment.api import router as deployment_router
+    from control_plane.deployment.onprem_api import router as onprem_router
 
+    app.include_router(onprem_router)
     app.include_router(deployment_router)
     app.include_router(router)
     app.include_router(otel_router)

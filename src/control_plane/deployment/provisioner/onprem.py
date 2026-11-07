@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import uuid
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 
 from . import handoff, inventory
@@ -26,10 +27,11 @@ def digest(value):
 
 
 class OnPremService:
-    def __init__(self, store, catalog, driver, checker, *, ttl=900, clock=None):
+    def __init__(self, store, catalog, driver, checker, *, ttl=900, clock=None, app_store=None):
         self.store, self.catalog, self.driver, self.checker = store, catalog, driver, checker
         self.ttl = max(60, min(int(ttl), 3600))
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.app_store = app_store
 
     def _get(self, env_id):
         env = self.store.get("environments", env_id)
@@ -131,13 +133,26 @@ class OnPremService:
             return 202, response
 
     def command(self, env_id, action, body, key):
-        with self.store.transaction():
+        with self.app_store.lock if self.app_store else nullcontext(), self.store.transaction():
             env = self._get(env_id)
             scope, fingerprint, previous = self._remembered(
                 f"{env['request']['org']}/{env_id}/{action}", body, key
             )
             if previous:
                 return 202, previous
+            if (
+                self.app_store
+                and action in {"plan", "apply"}
+                and any(
+                    e["cloud"] == "onprem"
+                    and e["status"] != "DESTROYED"
+                    and e["tfvars"].get("preparation_id") == env_id
+                    for e in self.app_store.environments()
+                )
+            ):
+                raise Conflict(
+                    "PREPARATION_IN_USE", "remove the app before changing its data services"
+                )
             self._busy(env_id)
             required = {"expectedRevision"}
             optional = (
