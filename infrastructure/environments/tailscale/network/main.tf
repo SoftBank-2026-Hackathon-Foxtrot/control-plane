@@ -24,22 +24,27 @@ provider "aws" {
 provider "google" { project = var.project_id }
 provider "tailscale" { tailnet = "-" }
 
-# This root has its own backend and API credential. It never uses the platform tailnet state.
+locals {
+  router_roles = toset(["aws", "gcp", "mgmt"])
+  router_tags  = [for role in sort(tolist(local.router_roles)) : "tag:${role}"]
+}
+
+# The management VPC and both app clouds join the tailnet selected by this API credential.
 resource "tailscale_acl" "this" {
   overwrite_existing_content = true
   acl = jsonencode({
-    tagOwners     = { "tag:aws" = ["autogroup:admin"], "tag:gcp" = ["autogroup:admin"] }
+    tagOwners     = { for tag in local.router_tags : tag => ["autogroup:admin"] }
     autoApprovers = { routes = var.routes }
     acls = [
-      { action = "accept", src = concat(["tag:aws", "tag:gcp"], keys(var.routes)),
-      dst = concat(["tag:aws:*", "tag:gcp:*"], [for cidr in keys(var.routes) : "${cidr}:*"]) },
+      { action = "accept", src = concat(local.router_tags, keys(var.routes)),
+      dst = concat([for tag in local.router_tags : "${tag}:*"], [for cidr in keys(var.routes) : "${cidr}:*"]) },
       { action = "accept", src = ["autogroup:admin"], dst = ["*:*"] },
     ]
   })
 }
 resource "tailscale_dns_preferences" "this" { magic_dns = true }
 resource "tailscale_tailnet_key" "router" {
-  for_each      = toset(["aws", "gcp"])
+  for_each      = local.router_roles
   reusable      = true
   ephemeral     = false
   preauthorized = true
@@ -63,6 +68,13 @@ resource "aws_secretsmanager_secret_version" "aws" {
   secret_id     = aws_secretsmanager_secret.aws.id
   secret_string = tailscale_tailnet_key.router["aws"].key
 }
+resource "aws_secretsmanager_secret" "mgmt" {
+  name = "foxtrot/${var.prefix}/tailscale-authkey-mgmt"
+}
+resource "aws_secretsmanager_secret_version" "mgmt" {
+  secret_id     = aws_secretsmanager_secret.mgmt.id
+  secret_string = tailscale_tailnet_key.router["mgmt"].key
+}
 resource "google_secret_manager_secret" "gcp" {
   secret_id = "foxtrot-${var.prefix}-tailscale-authkey-gcp"
   replication {
@@ -74,6 +86,6 @@ resource "google_secret_manager_secret_version" "gcp" {
   secret_data = tailscale_tailnet_key.router["gcp"].key
 }
 output "auth_key_refs" {
-  value = { aws = aws_secretsmanager_secret.aws.arn, gcp = google_secret_manager_secret.gcp.secret_id }
+  value = { aws = aws_secretsmanager_secret.aws.arn, gcp = google_secret_manager_secret.gcp.secret_id, mgmt = aws_secretsmanager_secret.mgmt.arn }
 }
 output "api_key_ref" { value = aws_secretsmanager_secret.api.arn }

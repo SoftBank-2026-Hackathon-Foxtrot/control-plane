@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        directory: [environments/aws, environments/gcp, environments/tailscale/aws, environments/tailscale/gcp, modules/tailscale_bootstrap, modules/app_migration_worker, environments/foundation/aws, environments/foundation/gcp, environments/platform/aws]
+        directory: [environments/aws, environments/gcp, environments/tailscale/aws, environments/tailscale/gcp, environments/tailscale/network, modules/tailscale_bootstrap, modules/app_migration_worker, environments/foundation/aws, environments/foundation/gcp, environments/platform/aws]
     defaults:
       run:
         working-directory: infrastructure/${{ matrix.directory }}
