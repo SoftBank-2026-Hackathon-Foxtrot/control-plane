@@ -160,6 +160,8 @@ class Timings(Model):
 
 class Seed(Model):
     application: str
+    source_environment: str | None = None
+    target_environment: str | None = None
     scope: str
     environments: dict[str, Environment] = Field(min_length=2)
     resources: Resources
@@ -171,6 +173,16 @@ class Seed(Model):
 
     @model_validator(mode="after")
     def unique_actors(self) -> Self:
+        if bool(self.source_environment) != bool(self.target_environment):
+            raise ValueError("declare both sourceEnvironment and targetEnvironment")
+        if self.source_environment:
+            if self.source_environment == self.target_environment:
+                raise ValueError("migration environments must differ")
+            if any(
+                name not in self.environments
+                for name in (self.source_environment, self.target_environment)
+            ):
+                raise ValueError("migration environment is not registered")
         actors = [actor for env in self.environments.values() for actor in env.actors]
         if len(actors) != len(set(actors)):
             raise ValueError("actor ids must be unique across environments")

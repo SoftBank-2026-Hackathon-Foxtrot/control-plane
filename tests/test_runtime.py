@@ -148,3 +148,35 @@ async def test_ecs_clones_approved_template_and_updates_only_approved_service(wo
         "service": "approved-service",
         "taskDefinition": ref,
     }
+
+
+async def test_old_service_observation_does_not_clear_unknown_mutation(world: World) -> None:
+    service, driver, app_id, version = await setup(world)
+    driver.lost = True
+    record = await service.prepare("alice", app_id, "gcp", version, RuntimeTarget(provider="ecs"))
+    await service.tick()
+    driver.exists = False  # Could be a stale control-plane observation after a lost reply.
+    record = await service.get("alice", record.id)
+    record = await service.reconcile("alice", record.id, record.version)
+    assert record.status == "UNKNOWN"
+    assert await world.repo.active_workflow_id() == record.id
+    assert driver.starts == 1
+
+
+async def test_prepared_gcp_or_onprem_can_attest_image_without_deployment(world: World) -> None:
+    from control_plane.applications import ImageSpec
+
+    service = world.platform.context.runtime
+    await world.workload.beat()
+    assert not await service.image_available(
+        "alice", "app", ImageSpec(image_ref=IMAGE), "gcp", world.seed
+    )
+    for ack in await world.repo.acks(world.seed.scope):
+        await world.repo.save_ack(ack.model_copy(update={"image_ref": IMAGE}))
+    assert await service.image_available(
+        "alice", "app", ImageSpec(image_ref=IMAGE), "gcp", world.seed
+    )
+    world.clock.advance(world.seed.timings.instance_ttl + 1)
+    assert not await service.image_available(
+        "alice", "app", ImageSpec(image_ref=IMAGE), "gcp", world.seed
+    )

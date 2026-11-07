@@ -15,6 +15,7 @@ from control_plane.applications import ApplicationService, ImageSpec
 from control_plane.clock import Clock
 from control_plane.domain.models import Model
 from control_plane.errors import ApiError
+from control_plane.seed import Seed
 from control_plane.store.repository import Repository
 from control_plane.store.table import VersionConflict
 
@@ -45,6 +46,8 @@ class RuntimeRecord(Model):
     previous_ref: str | None = None
     result_ref: str | None = None
     error: str | None = None
+    action: str = "prepare"
+    action_started_at: datetime | None = None
     created_at: datetime
 
 
@@ -126,7 +129,8 @@ class RuntimeService:
                     ("WORKFLOWS", "ACTIVE", json.dumps({"id": record.id}), 0),
                     ("RUNTIME", "ACTIVE", json.dumps({"id": record.id}), 0),
                     ("RUNTIME", record.id, record.model_dump_json(by_alias=True), 0),
-                ]
+                ],
+                checks=[(f"APPS#{owner}", app_id, app.version)],
             )
         except VersionConflict as error:
             raise ApiError(409, "RUNTIME_BUSY", "another operation owns the change slot") from error
@@ -153,7 +157,13 @@ class RuntimeService:
                     raise ApiError(
                         409, "DATA_RECOVERY_REQUIRED", "data recovery must precede runtime restore"
                     )
-        updated = record.model_copy(update={"status": "RESTORE_PENDING"})
+        updated = record.model_copy(
+            update={
+                "status": "RESTORE_PENDING",
+                "action": "restore",
+                "action_started_at": self.clock.now(),
+            }
+        )
         try:
             await self.repo.table.write_many(
                 [
@@ -175,16 +185,17 @@ class RuntimeService:
         if record.version != version or record.status != "UNKNOWN":
             raise ApiError(409, "INVALID_STATE", "reconcile requires the latest UNKNOWN operation")
         driver = self.driver(record.target)
+        if record.action == "restore" and await driver.restored(record):
+            record.status, record.error = "RESTORED", None
+            record = await self.save(record)
+            await self.release(record)
+            return record
         found = await driver.discover(record)
-        if found:
+        if found and record.action == "prepare":
             record.result_ref, record.status, record.error = found, "VERIFYING", None
-        elif await driver.previous(record) == record.previous_ref:
-            record.status, record.error = "FAILED", "NO_DEPLOYMENT_OBSERVED"
         else:
             return record
         record = await self.save(record)
-        if record.status == "FAILED":
-            await self.release(record)
         return record
 
     async def image_available(
@@ -193,6 +204,7 @@ class RuntimeService:
         app_id: str,
         image: ImageSpec,
         environment_id: str | None = None,
+        configuration: Seed | None = None,
     ) -> bool:
         page = await self.repo.table.query("RUNTIME", "run-")
         for item in page.items:
@@ -203,8 +215,32 @@ class RuntimeService:
                 and record.image == image
                 and record.status == "READY"
                 and (environment_id is None or record.environment_id == environment_id)
-            ) and await self.driver(record.target).ready(record):
-                return True
+            ):
+                try:
+                    if await self.driver(record.target).ready(record):
+                        return True
+                except Exception:
+                    log.info("runtime image could not be confirmed: %s", record.id)
+        # Existing GCP/on-prem apps may report their pinned image through authenticated heartbeats.
+        # This is managed-process attestation, not a cloud-provider container inspection.
+        if configuration and environment_id in configuration.environments:
+            assert environment_id is not None
+            hold, _ = await self.repo.hold(configuration.scope)
+            acks = await self.repo.acks(configuration.scope)
+            for actor, expected in configuration.environments[environment_id].actors.items():
+                matching = [
+                    ack
+                    for ack in acks
+                    if ack.actor_id == actor
+                    and ack.generation == hold.generation
+                    and (self.clock.now() - ack.observed_at).total_seconds()
+                    <= configuration.timings.instance_ttl
+                ]
+                if len(matching) < expected or any(
+                    ack.image_ref != image.image_ref for ack in matching
+                ):
+                    return False
+            return True
         return False
 
     async def tick(self) -> None:
@@ -243,6 +279,11 @@ class RuntimeService:
             elif record.status == "RESTORE_VERIFYING":
                 if await driver.restored(record):
                     record.status = "RESTORED"
+                elif (
+                    record.action_started_at
+                    and (self.clock.now() - record.action_started_at).total_seconds() > 300
+                ):
+                    record.status, record.error = "UNKNOWN", "RESTORE_TIMEOUT"
             elif record.status in {"APPLYING", "RESTORING"}:
                 # A process died after recording intent. Only observation is safe.
                 record.status = "UNKNOWN"

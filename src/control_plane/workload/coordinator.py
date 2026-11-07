@@ -56,10 +56,12 @@ class WorkloadCoordinator:
         generation: int,
         state: ActorState,
         in_flight: int,
+        image_ref: str | None = None,
     ) -> Directive:
         await self.repo.save_ack(
             ActorAck(
                 scope=self.scope,
+                image_ref=image_ref,
                 actor_id=actor_id,
                 instance_id=instance_id,
                 generation=generation,

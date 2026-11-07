@@ -49,6 +49,7 @@ class DockerDriver:
         environment = dict(record.image.environment)
         for key, ref in record.image.secret_refs.items():
             environment[key] = resolve_secret(ref)
+        environment["FOXTROT_IMAGE_REF"] = record.image.image_ref
         args = [
             "run",
             "-d",
@@ -157,6 +158,7 @@ class EcsDriver:
         container["image"] = record.image.image_ref
         env = {item["name"]: item["value"] for item in container.get("environment", [])}
         env.update(record.image.environment)
+        env["FOXTROT_IMAGE_REF"] = record.image.image_ref
         container["environment"] = [{"name": k, "value": v} for k, v in env.items()]
         refs = {item["name"]: item["valueFrom"] for item in container.get("secrets", [])}
         refs.update(record.image.secret_refs)

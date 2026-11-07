@@ -124,6 +124,7 @@ class EventPage(Model):
 
 
 class Heartbeat(Model):
+    image_ref: str | None = Field(default=None, max_length=2048)
     actor_id: str
     instance_id: str = Field(min_length=1, max_length=128)
     generation: int = Field(ge=0)

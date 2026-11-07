@@ -90,6 +90,10 @@ class WorkflowService:
                 "another migration has not finished",
                 blockers,
             ) from error
+        except VersionConflict as error:
+            raise ApiError(
+                409, "APP_CHANGED", "application settings changed; read and verify again"
+            ) from error
         for index, definition in enumerate(PLAN):
             await self.repo.save_stage(workflow.id, StageState(index=index, kind=definition.kind))
         await self._event(workflow, "WORKFLOW_CREATED", actor, f"{source_env} to {target_env}")

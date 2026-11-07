@@ -39,7 +39,7 @@ async def once(
         return JSONResponse(existing["response"], status_code=existing["status"])
     try:
         result = jsonable_encoder(await execute(), by_alias=True)
-    except Exception:
+    except ApiError:
         # A refused request changed nothing and its answer can go stale (a version conflict, say),
         # so the key is freed rather than made to replay it.
         await repo.forget_idempotency(storage_key)

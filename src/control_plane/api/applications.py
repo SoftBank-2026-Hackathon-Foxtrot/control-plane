@@ -5,14 +5,17 @@ from fastapi import APIRouter, Header
 from control_plane.api.dependencies import CheckedSession, Context, CurrentSession
 from control_plane.api.idempotency import once
 from control_plane.applications import (
+    Application,
     ApplicationInput,
     ApplicationService,
     ConfigurationInput,
     MigrationPolicy,
+    Verification,
     bind_configuration,
 )
 from control_plane.catalog import catalog_for
 from control_plane.errors import ApiError
+from control_plane.runtime import RuntimeRecord
 
 router = APIRouter(tags=["Applications"])
 
@@ -21,14 +24,14 @@ def service(context: Context) -> ApplicationService:
     return ApplicationService(context.repo, context.clock)
 
 
-@router.post("/v1/applications", status_code=201)
+@router.post("/v1/applications", status_code=201, response_model=Application)
 async def register(
     body: ApplicationInput,
     session: CheckedSession,
     context: Context,
     idempotency_key: str | None = Header(default=None),
 ) -> object:
-    _check_secrets(context, body)
+    _check_secrets(context, body, session.user.id)
     return await once(
         context.repo,
         user_id=session.user.id,
@@ -40,12 +43,12 @@ async def register(
     )
 
 
-@router.get("/v1/applications/{app_id}")
+@router.get("/v1/applications/{app_id}", response_model=Application)
 async def detail(app_id: str, session: CurrentSession, context: Context) -> object:
     return await service(context).get(session.user.id, app_id)
 
 
-@router.patch("/v1/applications/{app_id}")
+@router.patch("/v1/applications/{app_id}", response_model=Application)
 async def update(
     app_id: str,
     body: ApplicationInput,
@@ -54,7 +57,7 @@ async def update(
     expected_version: int = Header(ge=1),
     idempotency_key: str | None = Header(default=None),
 ) -> object:
-    _check_secrets(context, body)
+    _check_secrets(context, body, session.user.id)
     return await once(
         context.repo,
         user_id=session.user.id,
@@ -66,7 +69,7 @@ async def update(
     )
 
 
-@router.delete("/v1/applications/{app_id}")
+@router.delete("/v1/applications/{app_id}", response_model=Application)
 async def unregister(
     app_id: str,
     session: CheckedSession,
@@ -85,11 +88,17 @@ async def unregister(
     )
 
 
-def _check_secrets(context: Context, body: ApplicationInput) -> None:
+def _check_secrets(context: Context, body: ApplicationInput, owner: str) -> None:
     references = list(body.image.secret_refs.values())
     if body.image.registry_credential_ref:
         references.append(body.image.registry_credential_ref)
-    if any(ref not in context.settings.allowed_secret_refs for ref in references):
+    allowed = context.settings.personal_secret_refs.get(owner, [])
+    seed_owner = (
+        "local:developer" if context.settings.auth_disabled else context.settings.seed_owner_id
+    )
+    if owner == seed_owner:
+        allowed = [*allowed, *context.settings.allowed_secret_refs]
+    if any(ref not in allowed for ref in references):
         raise ApiError(422, "SECRET_NOT_ALLOWED", "select an approved Secret reference")
 
 
@@ -156,7 +165,7 @@ async def environment(
     return app.configuration.environments[environment_id]
 
 
-@router.post("/v1/applications/{app_id}/verify")
+@router.post("/v1/applications/{app_id}/verify", response_model=Verification)
 async def verify(
     app_id: str,
     body: ConfigurationInput,
@@ -171,12 +180,17 @@ async def verify(
         await service(context).idle(app)
         service(context).expect(app, body.expected_version)
         # Runtime observation is connected by the runtime adapter, never inferred from a digest.
-        target_env = list(app.configuration.environments)[1] if app.configuration else None
+        target_env = (
+            (app.configuration.target_environment or list(app.configuration.environments)[1])
+            if app.configuration
+            else None
+        )
         available = await context.runtime.image_available(
             session.user.id,
             app.id,
             app.image,
             target_env,
+            app.configuration,
         )
         return await verify_application(
             service(context),
@@ -197,7 +211,7 @@ async def verify(
     )
 
 
-@router.get("/v1/applications/{app_id}/policy")
+@router.get("/v1/applications/{app_id}/policy", response_model=MigrationPolicy)
 async def policy(app_id: str, session: CurrentSession, context: Context) -> object:
     return (await service(context).get(session.user.id, app_id)).policy
 
@@ -206,7 +220,7 @@ class PolicyInput(ConfigurationInput):
     policy: MigrationPolicy
 
 
-@router.put("/v1/applications/{app_id}/policy")
+@router.put("/v1/applications/{app_id}/policy", response_model=Application)
 async def change_policy(
     app_id: str,
     body: PolicyInput,
@@ -256,7 +270,11 @@ async def audit_events(
     return {"events": [json.loads(item.body) for item in page.items], "nextCursor": page.next_sk}
 
 
-@router.post("/v1/applications/{app_id}/environments/{environment_id}/prepare", status_code=202)
+@router.post(
+    "/v1/applications/{app_id}/environments/{environment_id}/prepare",
+    status_code=202,
+    response_model=RuntimeRecord,
+)
 async def prepare_runtime(
     app_id: str,
     environment_id: str,
@@ -287,12 +305,14 @@ async def prepare_runtime(
     )
 
 
-@router.get("/v1/runtime-operations/{operation_id}")
+@router.get("/v1/runtime-operations/{operation_id}", response_model=RuntimeRecord)
 async def runtime_status(operation_id: str, session: CurrentSession, context: Context) -> object:
     return await context.runtime.get(session.user.id, operation_id)
 
 
-@router.post("/v1/runtime-operations/{operation_id}/{action}", status_code=202)
+@router.post(
+    "/v1/runtime-operations/{operation_id}/{action}", status_code=202, response_model=RuntimeRecord
+)
 async def runtime_action(
     operation_id: str,
     action: str,

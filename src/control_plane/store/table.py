@@ -36,7 +36,11 @@ class Page:
 
 
 class Table(Protocol):
-    async def write_many(self, writes: list[tuple[str, str, str, int]]) -> None: ...
+    async def write_many(
+        self,
+        writes: list[tuple[str, str, str, int]],
+        checks: list[tuple[str, str, int]] | None = None,
+    ) -> None: ...
 
     async def get(self, pk: str, sk: str) -> Item | None: ...
 
@@ -57,8 +61,16 @@ class MemoryTable:
         self._items: dict[tuple[str, str], Item] = {}
         self._lock = threading.Lock()
 
-    async def write_many(self, writes: list[tuple[str, str, str, int]]) -> None:
+    async def write_many(
+        self,
+        writes: list[tuple[str, str, str, int]],
+        checks: list[tuple[str, str, int]] | None = None,
+    ) -> None:
         with self._lock:
+            for pk, sk, expected in checks or []:
+                item = self._items.get((pk, sk))
+                if (item.version if item else 0) != expected:
+                    raise VersionConflict(f"{pk}/{sk}")
             for pk, sk, _, expected in writes:
                 item = self._items.get((pk, sk))
                 if (item.version if item else 0) != expected:
@@ -134,7 +146,11 @@ class DynamoTable:
     def _item(raw: dict[str, Any]) -> Item:
         return Item(raw["pk"]["S"], raw["sk"]["S"], int(raw["version"]["N"]), raw["body"]["S"])
 
-    async def write_many(self, writes: list[tuple[str, str, str, int]]) -> None:
+    async def write_many(
+        self,
+        writes: list[tuple[str, str, str, int]],
+        checks: list[tuple[str, str, int]] | None = None,
+    ) -> None:
         operations = []
         for pk, sk, body, expected in writes:
             put: dict[str, Any] = {
@@ -151,6 +167,17 @@ class DynamoTable:
             if expected:
                 put["ExpressionAttributeValues"] = {":v": {"N": str(expected)}}
             operations.append({"Put": put})
+        for pk, sk, expected in checks or []:
+            check: dict[str, Any] = {
+                "TableName": self.name,
+                "Key": self._key(pk, sk),
+                "ConditionExpression": "attribute_not_exists(pk)"
+                if expected == 0
+                else "version = :v",
+            }
+            if expected:
+                check["ExpressionAttributeValues"] = {":v": {"N": str(expected)}}
+            operations.append({"ConditionCheck": check})
         try:
             await asyncio.to_thread(self.client.transact_write_items, TransactItems=operations)
         except self.client.exceptions.TransactionCanceledException as error:

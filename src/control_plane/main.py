@@ -78,6 +78,7 @@ def assemble(
                 workflow.application,
                 image,
                 workflow.target_env,
+                selected,
             ):
                 blockers.append("TARGET_IMAGE_NOT_CONFIRMED")
         return blockers

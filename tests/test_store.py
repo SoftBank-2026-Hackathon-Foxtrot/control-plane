@@ -142,3 +142,27 @@ async def test_an_oauth_request_can_be_consumed_once(table: Table) -> None:
     assert await repo.consume_oauth_request("state") == request
     assert await repo.consume_oauth_request("state") is None
     assert await repo.consume_oauth_request("missing") is None
+
+
+async def test_transaction_conflict_leaves_no_partial_lock_or_document(table: Table) -> None:
+    await table.put("slot", "active", "owned", expected_version=0)
+    with pytest.raises(VersionConflict):
+        await table.write_many(
+            [
+                ("document", "new", "must-not-be-created", 0),
+                ("slot", "active", "stolen", 0),
+            ]
+        )
+    assert await table.get("document", "new") is None
+    assert (await table.get("slot", "active")).body == "owned"
+
+
+async def test_transaction_checks_do_not_modify_a_version(table: Table) -> None:
+    await table.put("application", "one", "unchanged", expected_version=0)
+    await table.write_many([("workflow", "one", "new", 0)], checks=[("application", "one", 1)])
+    assert (await table.get("application", "one")).version == 1
+    with pytest.raises(VersionConflict):
+        await table.write_many(
+            [("workflow", "two", "must-not-exist", 0)], checks=[("application", "one", 2)]
+        )
+    assert await table.get("workflow", "two") is None

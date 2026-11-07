@@ -462,7 +462,7 @@ async def test_heartbeat_needs_the_workload_token_and_known_names(console: Conso
     other_scope = await console.http.post(
         "/internal/v1/workloads/scope:other/heartbeat", json=body, headers=headers
     )
-    assert other_scope.status_code == 404
+    assert other_scope.status_code == 401
 
 
 async def test_auth_disabled_is_refused_outside_local() -> None:
@@ -562,3 +562,30 @@ async def test_personal_workspace_hides_other_users_app_and_workflow(console: Co
         headers=console.change_headers(),
     )
     assert response.status_code == 404
+
+
+async def test_other_workload_scope_requires_its_assigned_token(
+    console: Console, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OTHER_WORKLOAD_TOKEN", "other-token")
+    object.__setattr__(
+        console.world.platform.context,
+        "settings",
+        SETTINGS.model_copy(
+            update={
+                "workload_token_secrets": {"scope:other": "env:OTHER_WORKLOAD_TOKEN"},
+            }
+        ),
+    )
+    response = await console.http.post(
+        "/internal/v1/workloads/scope:other/heartbeat",
+        headers={"Authorization": "Bearer workload-token"},
+        json={
+            "actorId": "goods-aws-api",
+            "instanceId": "one",
+            "generation": 0,
+            "state": "RUNNING",
+            "inFlight": 0,
+        },
+    )
+    assert response.status_code == 401

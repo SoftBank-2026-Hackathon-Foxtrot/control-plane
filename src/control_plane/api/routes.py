@@ -35,7 +35,7 @@ from control_plane.api.schemas import (
     Workspace,
     allowed_commands,
 )
-from control_plane.applications import ApplicationService
+from control_plane.applications import Application, ApplicationService
 from control_plane.domain.models import ResourceKind, ResourceState, Session, Workflow
 from control_plane.engine.context import Services
 from control_plane.errors import ApiError
@@ -124,10 +124,12 @@ async def workspaces(session: CurrentSession) -> list[Workspace]:
 
 # ---- what is managed -------------------------------------------------------------------------
 @router.get("/v1/applications", response_model_by_alias=True)
-async def applications(session: CurrentSession, context: Context) -> list[Any]:
+async def applications(
+    session: CurrentSession, context: Context
+) -> list[Application | ApplicationView]:
     registered = await ApplicationService(context.repo, context.clock).list(session.user.id)
     if not _owns_seed(context, session):
-        return registered
+        return [*registered]
     seed = context.seed
     return [
         ApplicationView(
@@ -296,6 +298,7 @@ async def heartbeat(scope: str, body: Heartbeat, context: Context) -> DirectiveV
         generation=body.generation,
         state=body.state,
         in_flight=body.in_flight,
+        image_ref=body.image_ref,
     )
     return DirectiveView(
         desired=directive.desired,
@@ -314,6 +317,8 @@ def _expire(response: Response, context: ApiContext, name: str) -> None:
 
 
 def _owns_seed(context: ApiContext, session: Session) -> bool:
+    if not context.settings.legacy_seed_enabled:
+        return False
     owner = "local:developer" if context.settings.auth_disabled else context.settings.seed_owner_id
     return bool(owner) and owner == session.user.id
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,7 +12,7 @@ from fastapi import Depends, Header, Request
 
 from control_plane.auth import LOCAL_USER, AuthService
 from control_plane.clock import Clock
-from control_plane.config import Settings
+from control_plane.config import Settings, resolve_secret
 from control_plane.domain.models import Session
 from control_plane.engine.context import Services
 from control_plane.errors import ApiError
@@ -96,8 +97,15 @@ CheckedSession = Annotated[Session, Depends(checked_change)]
 
 
 async def workload_caller(
-    context: Context, authorization: Annotated[str | None, Header()] = None
+    scope: str, context: Context, authorization: Annotated[str | None, Header()] = None
 ) -> None:
-    expected = f"Bearer {context.workload_token}"
+    reference = context.settings.workload_token_secrets.get(scope)
+    if reference:
+        token = await asyncio.to_thread(resolve_secret, reference, region=context.settings.region)
+    elif scope == context.seed.scope:
+        token = context.workload_token
+    else:
+        raise ApiError(401, "UNAUTHENTICATED", "no token assigned to this workload scope")
+    expected = f"Bearer {token}"
     if not authorization or not hmac.compare_digest(authorization.encode(), expected.encode()):
         raise ApiError(401, "UNAUTHENTICATED", "a workload token is required")

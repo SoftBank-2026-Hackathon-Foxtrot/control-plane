@@ -9,7 +9,9 @@ from control_plane.seed import Seed
 
 def direction(seed: Seed) -> str:
     names = list(seed.environments)
-    return f"{names[0]}->{names[1]}"
+    source = seed.source_environment or names[0]
+    target = seed.target_environment or names[1]
+    return f"{source}->{target}"
 
 
 def enforce(app: Application, source: str, target: str) -> Seed:

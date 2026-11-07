@@ -80,12 +80,22 @@ class Repository:
     async def create_workflow(self, workflow: Workflow) -> None:
         """Takes the single active slot first, so two requests cannot both start a migration."""
         try:
+            checks = []
+            if workflow.application_snapshot:
+                checks.append(
+                    (
+                        f"APPS#{workflow.owner_id}",
+                        workflow.application,
+                        int(workflow.application_snapshot["version"]),
+                    )
+                )
             await self.table.write_many(
                 [
                     (WORKFLOWS, ACTIVE, json.dumps({"id": workflow.id}), 0),
                     (f"WORKFLOW#{workflow.id}", META, _dump(workflow), 0),
                     (WORKFLOWS, f"ID#{workflow.id}", "{}", 0),
-                ]
+                ],
+                checks=checks,
             )
         except VersionConflict:
             active = await self.active_workflow_id()

@@ -200,6 +200,7 @@ class ActorState(StrEnum):
 
 
 class ActorAck(Model):
+    image_ref: str | None = None
     scope: str
     actor_id: str
     instance_id: str

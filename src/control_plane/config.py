@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     """The team's traffic service, the only writer of the Cloudflare load balancer."""
     traffic_token_secret: str = "env:TRAFFIC_SERVICE_TOKEN"
 
+    workload_token_secrets: dict[str, str] = {}
     workload_token_secret: str = "env:WORKLOAD_TOKEN"
 
     public_url: str = "http://localhost:5173"
@@ -45,6 +46,8 @@ class Settings(BaseSettings):
     runtime_docker_enabled: bool = False
     personal_catalog_paths: dict[str, str] = {}
     allowed_secret_refs: list[str] = []
+    personal_secret_refs: dict[str, list[str]] = {}
+    legacy_seed_enabled: bool = False
     seed_owner_id: str = ""
     """Explicit owner of the legacy seed. Blank keeps it hidden from signed-in users."""
     """Skips login for a local console. Refused outside `environment=local`."""

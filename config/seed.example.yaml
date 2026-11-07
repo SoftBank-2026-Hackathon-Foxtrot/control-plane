@@ -1,3 +1,5 @@
+sourceEnvironment: aws
+targetEnvironment: gcp
 # Copy to config/seed.yaml. Addresses, refs and secret names here are examples.
 application: goods
 scope: scope:goods
