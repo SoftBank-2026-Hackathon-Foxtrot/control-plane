@@ -276,6 +276,14 @@ locals {
     forceDestroyStorage = true
     expiresInDays       = 30
     # Apps reach Redis and the object route through the platform (DB through PgBouncer comes next).
+    appTelemetry = var.observability == null ? null : {
+      endpoint      = var.observability.endpoint
+      applicationId = local.configured_seed.application
+      headersSecrets = {
+        aws = var.observability.headers_secret_arn
+        gcp = google_secret_manager_secret.app_otel_headers[0].id
+      }
+    }
     appEnv = {
       REDIS_URL               = "redis://redis-proxy.internal:6379"
       OBJECT_MIGRATION_SERVER = "http://object-migration.internal:8080"

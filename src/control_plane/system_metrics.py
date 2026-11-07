@@ -1,4 +1,4 @@
-"""Read-only, scoped host metrics for the application console."""
+"""Deployment-owned container metrics. No application-name or host-wide fallback."""
 
 from __future__ import annotations
 
@@ -8,10 +8,11 @@ import math
 from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BeforeValidator
 
 from control_plane.api.dependencies import Context, CurrentSession
+from control_plane.deployment.api import call, org_id, service
 from control_plane.errors import ApiError
 from control_plane.telemetry_query import read_backend
 
@@ -20,52 +21,58 @@ Category = Literal["cpu", "memory", "disk", "network"]
 Window = Annotated[Literal[15, 60, 360], BeforeValidator(int)]
 
 
-def scope(context: Context, application_id: str, environment: str) -> str:
-    if application_id != context.seed.application or environment not in context.seed.environments:
-        raise ApiError(404, "NOT_FOUND", "unknown application or environment")
+async def scope(
+    context: Context, request: Request, session: Any, application_id: str, deployment: str
+) -> str:
+    if application_id != context.seed.application:
+        raise ApiError(404, "NOT_FOUND", "unknown application")
+    owner = org_id(str(session.user.id), application_id)
+    engine = service(request)
+    selected = await call(engine.store.environment, deployment)
+    if selected is None or selected["org_id"] != owner:
+        raise ApiError(404, "NOT_FOUND", "deployment not found")
     return (
         f"application_id={json.dumps(application_id)},"
-        f'deployment_environment_name={json.dumps(environment)},service_name="foxtrot-app-host"'
+        f"foxtrot_owner_id={json.dumps(owner)},"
+        f"deployment_id={json.dumps(selected['deployment_id'])},"
+        f"deployment_environment_name={json.dumps(selected['cloud'])},"
+        'service_name="foxtrot-app-runtime"'
     )
 
 
-def queries(labels: str, host: str, category: Category) -> dict[str, tuple[str, str]]:
-    labels += f",host_name={json.dumps(host)}"
+def queries(labels: str, instance: str, category: Category) -> dict[str, tuple[str, str]]:
+    labels += f",service_instance_id={json.dumps(instance)}"
 
-    def fresh(metric: str, extra: str = "") -> str:
-        selector = f"{metric}{{{labels}{extra}}}"
+    def fresh(metric: str) -> str:
+        selector = f"{metric}{{{labels}}}"
         return f"({selector} and (timestamp({selector}) > time() - 30))"
 
+    def value(name: str) -> str:
+        return f"max({fresh('foxtrot_runtime_' + name)})"
+
+    def rate(name: str) -> str:
+        selector = f"foxtrot_runtime_{name}_total{{{labels}}}"
+        return f"max(rate({selector}[2m]) and (timestamp({selector}) > time() - 30))"
+
     if category == "cpu":
-        metric = "system_cpu_time_seconds_total{" + labels + ',state="idle"}'
         return {
-            "cpu": (
-                f"100 * (1 - avg(rate({metric}[2m]) and (timestamp({metric}) > time() - 30)))",
-                "%",
-            )
+            "cpu": (f"100 * ({rate('cpu_seconds')}) / ({value('cpu_limit')})", "%"),
+            "cpu_cores": (rate("cpu_seconds"), "cores"),
         }
     if category == "memory":
-        available = f"max({fresh('system_linux_memory_available_bytes')})"
-        limit = f"max({fresh('system_memory_limit_bytes')})"
         return {
-            "memory": (f"100 * (1 - ({available}) / ({limit}))", "%"),
-            "memory_bytes": (f"({limit}) - ({available})", "By"),
+            "memory": (f"100 * ({value('memory_bytes')}) / ({value('memory_limit')})", "%"),
+            "memory_bytes": (value("memory_bytes"), "By"),
         }
     if category == "disk":
-        used = "sum(" + fresh("system_filesystem_usage_bytes", ',state="used",mountpoint="/"') + ")"
-        total = "sum(" + fresh("system_filesystem_usage_bytes", ',mountpoint="/"') + ")"
-        result = {"disk_usage": (f"100 * ({used}) / ({total})", "%")}
-        metric, directions = "system_disk_io_bytes_total", ("read", "write")
-    else:
-        result = {}
-        metric, directions = "system_network_io_bytes_total", ("receive", "transmit")
-    for direction in directions:
-        selector = f'{metric}{{{labels},direction="{direction}"}}'
-        result[f"{category}_{direction}"] = (
-            f"sum(rate({selector}[2m]) and (timestamp({selector}) > time() - 30))",
-            "By/s",
-        )
-    return result
+        return {
+            "disk_read": (rate("disk_read"), "By/s"),
+            "disk_write": (rate("disk_write"), "By/s"),
+        }
+    return {
+        "network_receive": (rate("network_receive"), "By/s"),
+        "network_transmit": (rate("network_transmit"), "By/s"),
+    }
 
 
 def points(payload: dict[str, Any], start: int, end: int, step: int) -> list[list[float | None]]:
@@ -88,16 +95,17 @@ def points(payload: dict[str, Any], start: int, end: int, step: int) -> list[lis
 async def series(
     application_id: str,
     context: Context,
-    _: CurrentSession,
-    environment: str = Query(max_length=64),
-    host: str = Query(min_length=1, max_length=128),
+    request: Request,
+    session: CurrentSession,
+    deployment: str = Query(min_length=1, max_length=128),
+    instance: str = Query(min_length=1, max_length=128),
     category: Category = "cpu",
     minutes: Window = 60,
 ) -> dict[str, Any]:
-    labels = scope(context, application_id, environment)
+    labels = await scope(context, request, session, application_id, deployment)
     end = int(context.clock.now().timestamp())
     start, step = end - minutes * 60, max(10, minutes // 3)
-    definitions = queries(labels, host, category)
+    definitions = queries(labels, instance, category)
     async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
         responses = await asyncio.gather(
             *[
@@ -124,21 +132,25 @@ async def series(
     return {"from": start, "to": end, "step": step, "series": rows}
 
 
-@router.get("/hosts")
-async def hosts(
+@router.get("/instances")
+async def instances(
     application_id: str,
     context: Context,
-    _: CurrentSession,
-    environment: str = Query(max_length=64),
+    request: Request,
+    session: CurrentSession,
+    deployment: str = Query(min_length=1, max_length=128),
 ) -> dict[str, Any]:
-    labels = scope(context, application_id, environment)
-    selector = f"system_cpu_time_seconds_total{{{labels}}}"
+    labels = await scope(context, request, session, application_id, deployment)
+    selector = f"foxtrot_runtime_collection{{{labels}}}"
     async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
         state, payload = await read_backend(
             http,
             context.settings.prometheus_url,
             "/api/v1/query",
-            {"query": f"max by (host_name) (timestamp({selector}))"},
+            {
+                "query": "max by (service_instance_id, app_role, network_scope) "
+                f"(timestamp({selector}))"
+            },
         )
     rows = []
     try:
@@ -149,16 +161,20 @@ async def hosts(
             ):
                 raise ValueError("invalid backend result")
             for row in payload["data"]["result"][:64]:
-                name = row["metric"].get("host_name")
+                name = row["metric"].get("service_instance_id")
                 at = float(row["value"][1])
                 if isinstance(name, str) and 0 < len(name) <= 128 and math.isfinite(at):
                     rows.append(
                         {
-                            "name": name,
+                            "id": name,
+                            "role": str(row["metric"].get("app_role", "app"))[:128],
+                            "networkScope": "app-instance"
+                            if row["metric"].get("network_scope") == "app-instance"
+                            else "container",
                             "lastSeen": at,
                             "stale": context.clock.now().timestamp() - at > 30,
                         }
                     )
     except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
-        return {"state": "UNAVAILABLE", "hosts": []}
-    return {"state": state, "hosts": sorted(rows, key=lambda r: str(r["name"]))}
+        return {"state": "UNAVAILABLE", "instances": []}
+    return {"state": state, "instances": sorted(rows, key=lambda row: str(row["id"]))}

@@ -10,7 +10,7 @@ import os
 import threading
 import time
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -91,6 +91,34 @@ async def test_real_sdk_collector_and_three_backends(monkeypatch):
                 for m in result["metrics"]
             )
             assert result["traces"], result
+            time_range = {
+                "from": (datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+                "to": datetime.now(UTC).isoformat(),
+            }
+            traces = (
+                await client.get(f"/v1/workflows/{workflow.id}/traces", params=time_range)
+            ).json()
+            assert traces["state"] == "OK" and traces["traces"], traces
+            trace_id = traces["traces"][0]["traceId"]
+            spans = (await client.get(f"/v1/workflows/{workflow.id}/traces/{trace_id}")).json()
+            assert spans["state"] == "OK" and spans["spans"], spans
+            assert spans["spans"][0]["name"] == "migration.copy"
+            logs = (await client.get(f"/v1/workflows/{workflow.id}/logs", params=time_range)).json()
+            assert logs["logs"] and logs["logs"][0]["traceId"] == trace_id, logs
+            collection = (
+                await client.get("/v1/telemetry/collection", params={"workflow": workflow.id})
+            ).json()
+            assert (
+                next(row for row in collection["modules"] if row["id"] == "DATABASE")["state"]
+                == "FRESH"
+            )
+            series = (
+                await client.get(
+                    f"/v1/workflows/{workflow.id}/telemetry/series",
+                    params=time_range | {"comp": "db"},
+                )
+            ).json()
+            assert series["state"] == "OK" and len(series["metrics"]) == 4, series
             # After the exporter stops, a retained snapshot becomes stale rather than zero.
             world.clock.now = lambda: (
                 datetime.now(UTC) + __import__("datetime").timedelta(seconds=30)

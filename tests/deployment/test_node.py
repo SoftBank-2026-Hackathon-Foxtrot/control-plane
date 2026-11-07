@@ -364,3 +364,26 @@ def test_node_requires_pinned_ssh_identity_and_private_key(node_config):
     Path(nodes["pc"]["sshKeyFile"]).chmod(0o644)
     with pytest.raises(spec.RequestError, match="private"):
         resolve(nodes, value)
+
+
+def test_monitoring_is_deployed_on_registered_host(tmp_path, node_config, monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.internal:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer%20test-token")
+    runner = executor(tmp_path, node_config)
+    runner.telemetry["applicationId"] = "chiikawa"
+    document = rendered(node_config)
+    node = runner.resolve(document)
+    services = runner.compose("env-123456789abc", document, node)["services"]
+    assert "otel-system" not in services
+    assert all(service.get("network_mode") != "host" for service in services.values())
+    assert services["api"]["environment"]["OTEL_APPLICATION_ID"] == "chiikawa"
+    assert services["api"]["environment"]["OTEL_SYSTEM_METRICS"] == "container"
+    assert services["api"]["environment"]["OTEL_OWNER_ID"] == "testorg"
+    assert services["api"]["environment"]["OTEL_DEPLOYMENT_ID"] == document["deployment_id"]
+    assert services["worker-1"]["environment"]["OTEL_APP_ROLE"] == "worker"
+    document["app"]["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://other"
+    with pytest.raises(spec.RequestError, match="OTEL"):
+        runner.compose("env-123456789abc", document, node)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS")
+    with pytest.raises(spec.RequestError, match="headers"):
+        runner.resolve(rendered(node_config))
