@@ -150,6 +150,14 @@ async def test_deploy_for_requested_migration_after_preparing_the_node(registere
     workflow = requested.json()["workflow"]
     assert workflow["status"] == "PLANNED"
     assert workflow["createdBy"] == "hyunsu"
+    assert "createdById" not in workflow
+    for cloud in ("aws", "gcp"):
+        rejected = await console.http.post(
+            "/v1/applications/goods/deployments",
+            json={"cloud": cloud, "workflowId": workflow["id"]},
+            headers=console.change_headers(),
+        )
+        assert (rejected.status_code, rejected.json()["code"]) == (404, "NOT_FOUND")
     body = {
         "cloud": "onprem",
         "workflowId": workflow["id"],
@@ -174,8 +182,11 @@ async def test_deploy_for_requested_migration_after_preparing_the_node(registere
 @pytest.mark.parametrize("owner_id", ["github:7", None])
 async def test_matching_login_alone_cannot_claim_a_workflow(registered_pc, owner_id):
     console, engine, _, _ = registered_pc
+    console.world.seed.environments["onprem"] = Environment(
+        app_url="http://onprem-app:80", traffic_pool="onprem", actors={"onprem-api": 1}
+    )
     workflow = await console.world.platform.context.workflows.create(
-        source_env="aws", target_env="gcp", actor="hyunsu", actor_id=owner_id
+        source_env="aws", target_env="onprem", actor="hyunsu", actor_id=owner_id
     )
     denied = await console.http.post(
         "/v1/applications/goods/deployments",

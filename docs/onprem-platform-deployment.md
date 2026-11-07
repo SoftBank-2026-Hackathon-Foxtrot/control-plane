@@ -216,6 +216,8 @@ Idempotency-Key: goods-home-app-1
 이 앱 배포 ID와 데이터 서비스 준비 ID는 서로 다르다.
 독립적으로 앱만 배포할 때는 `workflowId`를 생략한다. 기존 워크플로에 로그인 이름만
 저장돼 있고 생성자 계정 ID를 확인할 수 없다면 그 요청을 앱 배포에 연결할 수 없다.
+온프렘 배포는 `targetEnv: "onprem"`인 요청에 연결한다. 이 요청의 내부 저장 기록에만
+생성자의 계정 ID를 보관한다. 콘솔에는 기존과 같이 `createdBy`로 로그인 이름을 표시한다.
 `mode:"plan"`을 사용하면 계획 뒤 `POST .../apply`로 실행을 분리할 수 있다.
 데이터 준비의 apply는 `expectedRevision`과 응답의 `plan.planId`도 요구한다.
 

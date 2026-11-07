@@ -57,6 +57,14 @@ def _dump(model: BaseModel) -> str:
     return model.model_dump_json(by_alias=True)
 
 
+def _dump_workflow(workflow: Workflow) -> str:
+    if workflow.target_env == "onprem" and workflow.created_by_id is not None:
+        body = workflow.model_dump(mode="json", by_alias=True)
+        body["createdById"] = workflow.created_by_id
+        return json.dumps(body)
+    return _dump(workflow)
+
+
 _sequence = itertools.count()
 
 
@@ -122,7 +130,9 @@ class Repository:
             if active is None:  # finished between the write and the read
                 raise
             raise ActiveWorkflowExists(active) from None
-        await self.table.put(f"WORKFLOW#{workflow.id}", META, _dump(workflow), expected_version=0)
+        await self.table.put(
+            f"WORKFLOW#{workflow.id}", META, _dump_workflow(workflow), expected_version=0
+        )
         await self.table.put(WORKFLOWS, f"ID#{workflow.id}", "{}", expected_version=0)
 
     async def active_workflow_id(self) -> str | None:
@@ -149,7 +159,10 @@ class Repository:
     async def save_workflow(self, workflow: Workflow) -> Workflow:
         """Raises VersionConflict if anyone changed it since it was read."""
         version = await self.table.put(
-            f"WORKFLOW#{workflow.id}", META, _dump(workflow), expected_version=workflow.version
+            f"WORKFLOW#{workflow.id}",
+            META,
+            _dump_workflow(workflow),
+            expected_version=workflow.version,
         )
         return workflow.model_copy(update={"version": version})
 

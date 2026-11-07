@@ -124,7 +124,7 @@ async def application_recovery(
     if env is None or env["org_id"] != owner:
         raise ApiError(404, "NOT_FOUND", "deployment not found")
     if env["cloud"] != "onprem":
-        raise ApiError(422, "INVALID_DEPLOYMENT", "this endpoint handles on-prem apps only")
+        raise ApiError(404, "NOT_FOUND", "unknown provisioning endpoint")
     action = request.url.path.rsplit("/", 1)[-1]
     if action == "destroy" and (workflow_id := env["request"].get("workflowId")):
         workflow = await context.repo.workflow(workflow_id)
