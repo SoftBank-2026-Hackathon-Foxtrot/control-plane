@@ -9,9 +9,26 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from control_plane.domain.models import OAuthRequest, Workflow
+from control_plane.domain.models import OAuthRequest, ResourceKind, Workflow
 from control_plane.store.repository import ActiveWorkflowExists, Repository
 from control_plane.store.table import DynamoTable, MemoryTable, Table, VersionConflict
+
+
+async def test_binding_refresh_preserves_a_new_migration_link(table: Table) -> None:
+    repo = Repository(table)
+    binding = {"bindingId": "bind-fixed", "status": "ACTIVE"}
+    await repo.save_application_binding("goods", ResourceKind.DATABASE, binding)
+    stale = await repo.application_binding("goods", ResourceKind.DATABASE)
+    assert stale is not None
+    await repo.save_application_binding(
+        "goods",
+        ResourceKind.DATABASE,
+        binding,
+        migration_id="migration-new",
+    )
+    await repo.save_application_binding("goods", ResourceKind.DATABASE, stale)
+    current = await repo.application_binding("goods", ResourceKind.DATABASE)
+    assert current and current["lastMigrationId"] == "migration-new"
 
 
 @pytest.fixture(params=["memory", "dynamodb"])

@@ -206,6 +206,7 @@ class FakeAdapter:
         }[self.kind]
         profiles = [{"kind": self.kind.value, "profile": profile}]
         if self.kind is ResourceKind.DATABASE:
+            profiles.append({"kind": self.kind.value, "profile": "postgres-logical-pgbouncer-v1"})
             profiles.append({"kind": self.kind.value, "profile": "gcp-dms-postgres-pgbouncer-v1"})
             profiles.append(
                 {"kind": self.kind.value, "profile": "postgres-managed-logical-pgbouncer-v1"}
@@ -215,7 +216,7 @@ class FakeAdapter:
             modes = ["REVERSE_REQUIRED"]
             if self.kind is ResourceKind.DATABASE:
                 modes = ["BEFORE_TARGET_WRITE"]
-                if (
+                if entry["profile"] == "postgres-logical-pgbouncer-v1" or (
                     entry["profile"] == "postgres-managed-logical-pgbouncer-v2"
                     and self.reverse_supported
                 ):
@@ -225,7 +226,18 @@ class FakeAdapter:
 
     # ---- plans -------------------------------------------------------------------------------
     def _create(self, plan: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        if self.kind is not ResourceKind.REDIS:
+        direct = "source" in plan
+        if direct:
+            plan = dict(plan)
+            binding = next(
+                binding
+                for binding in self.bindings.values()
+                if binding.get("bindingRef", binding["bindingId"]) == plan["bindingRef"]
+            )
+            assert binding["source"] == plan["source"]
+            plan["sourceRef"] = f"endpoint:{plan['source']['host']}"
+            plan["targetRef"] = f"endpoint:{plan['target']['host']}"
+        if not direct and self.kind is not ResourceKind.REDIS:
             # Redis alone accepts a fractional maxQuiesceSeconds. The others hold to the contract.
             problems = contract_errors("CreateMigration", plan)
             assert not problems, problems
@@ -249,6 +261,25 @@ class FakeAdapter:
 
     def _register_binding(self, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         binding_id = f"bind-{uuid4().hex[:6]}"
+        if "source" in body:
+            self.bindings[binding_id] = {
+                "bindingId": binding_id,
+                "bindingRef": f"binding:{binding_id}"
+                if self.kind is ResourceKind.REDIS
+                else binding_id,
+                "status": "REGISTERING",
+                "kind": self.kind.value,
+                "resourceId": body["resourceId"],
+                "source": body["source"],
+                "proxy": {
+                    "host": f"{self.kind.value.lower()}-goods.internal",
+                    "port": 6432 if self.kind is ResourceKind.DATABASE else 6379,
+                    "database": body["source"]["database"],
+                    "protocol": "postgresql" if self.kind is ResourceKind.DATABASE else "redis",
+                },
+                "workloadScopeRef": f"workload:{binding_id}",
+            }
+            return 202, {"bindingId": binding_id}
         self.bindings[binding_id] = {
             "bindingId": binding_id,
             "status": "REGISTERING",
@@ -522,6 +553,13 @@ class FakeAdapter:
         if action == "ROLLBACK":
             migration.rolled_back = True
         migration.lifecycle = AFTER[action]
+        if action == "FINALIZE" and "source" in migration.plan:
+            binding = next(
+                binding
+                for binding in self.bindings.values()
+                if binding.get("bindingRef", binding["bindingId"]) == migration.plan["bindingRef"]
+            )
+            binding["source"] = migration.plan["source" if migration.rolled_back else "target"]
 
     def _settle_unknown(self, migration: Migration) -> None:
         pending = self.operations.get(migration.unknown_operation or "")

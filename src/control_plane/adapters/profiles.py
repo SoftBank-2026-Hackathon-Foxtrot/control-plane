@@ -162,6 +162,7 @@ class RedisProfile(ResourceProfile):
     kind = ResourceKind.REDIS
     resource_id = "redis"
     profile = "redis-proxy-sync-v1"
+    requires_workload_hold = True
 
     def _policy(self, seed: ResourceSeed) -> dict[str, Any]:
         # Its writes stop for under two seconds, so this adapter takes fractions.

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -18,6 +18,40 @@ class ResourceKind(StrEnum):
     DATABASE = "DATABASE"
     REDIS = "REDIS"
     OBJECT_STORAGE = "OBJECT_STORAGE"
+
+
+class Endpoint(Model):
+    """A connection description. Credentials stay in the agent's secret store."""
+
+    host: str = Field(min_length=1, pattern=r"^[^\s/@]+$")
+    port: int | None = Field(default=None, ge=1, le=65535)
+    database: str = Field(min_length=1)
+    secret_ref: str = Field(min_length=1)
+    provider: Literal["SELF_MANAGED", "AWS_RDS", "GCP_CLOUDSQL"] | None = None
+    provider_instance: str | None = None
+    writer_role: str | None = None
+    options: dict[Literal["tls"], bool] | None = None
+
+    def wire(self, kind: ResourceKind) -> dict[str, Any]:
+        body = self.model_dump(by_alias=True, exclude_none=True)
+        body["port"] = self.port or (5432 if kind is ResourceKind.DATABASE else 6379)
+        return body
+
+    def identity(self, kind: ResourceKind) -> tuple[object, ...]:
+        body = self.wire(kind)
+        identity: tuple[object, ...] = (
+            self.host.lower(),
+            body["port"],
+            self.database,
+        )
+        if kind is ResourceKind.DATABASE:
+            identity += (self.provider or "SELF_MANAGED", self.provider_instance)
+        return identity
+
+
+class EndpointPair(Model):
+    source: Endpoint
+    target: Endpoint
 
 
 class WorkflowStatus(StrEnum):
@@ -111,6 +145,8 @@ class ResourceState(Model):
     last_status: dict[str, Any] | None = None
     last_status_at: datetime | None = None
     last_route: str | None = None
+    plan: dict[str, Any] | None = None
+    """The immutable request for this workflow, including direct endpoint inputs."""
 
 
 class CommandPhase(StrEnum):
@@ -185,7 +221,7 @@ class HoldDesired(StrEnum):
 
 
 class RedisRoute(StrEnum):
-    """How the application reaches Redis: directly outside a migration, through the proxy in one."""
+    """DIRECT is accepted in old actor reports; directives always use the fixed proxy."""
 
     DIRECT = "DIRECT"
     PROXY = "PROXY"
@@ -202,7 +238,7 @@ class HoldState(Model):
     held_since: datetime | None = None
     released_at: datetime | None = None
     object_migration_id: str | None = None
-    redis_route: RedisRoute = RedisRoute.DIRECT
+    redis_route: RedisRoute = RedisRoute.PROXY
     redis_endpoint: str | None = None
     """For DIRECT: the environment whose Redis to use. None leaves the application's own default."""
     redis_route_generation: int = 0

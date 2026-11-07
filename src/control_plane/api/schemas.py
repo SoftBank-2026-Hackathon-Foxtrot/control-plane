@@ -8,6 +8,8 @@ from pydantic import Field
 
 from control_plane.domain.models import (
     ActorState,
+    Endpoint,
+    EndpointPair,
     HoldDesired,
     Model,
     RedisRoute,
@@ -24,6 +26,11 @@ from control_plane.workflows import ALLOWED_COMMANDS
 class CreateWorkflow(Model):
     source_env: str
     target_env: str
+    resources: dict[ResourceKind, EndpointPair] = Field(default_factory=dict)
+
+
+class InitializeBindings(Model):
+    sources: dict[ResourceKind, Endpoint] = Field(default_factory=dict)
 
 
 class WorkflowCommand(Model):
@@ -123,7 +130,7 @@ class HoldView(Model):
     generation: int
     held_since: Any
     actors: list[ActorView]
-    redis_route: RedisRoute = RedisRoute.DIRECT
+    redis_route: RedisRoute = RedisRoute.PROXY
     redis_endpoint: str | None = None
     redis_route_generation: int = 0
 

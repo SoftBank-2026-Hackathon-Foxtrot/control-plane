@@ -32,6 +32,9 @@ async def quiesce_reference(
         raise WorkloadNotHeld(", ".join(waiting))
     hold = await coordinator.mark_held()
     assert hold.held_since is not None
+    if kind is not ResourceKind.DATABASE:
+        # Redis validates the marker; only the database agent reads the shared SDK gate store.
+        return f"quiesce:{kind.value.lower()}:{transition_id}:{generation}"
     resource = await ctx.resource(kind)
     assert resource.migration_id is not None
     reference = await ctx.services.gate.issue_held(

@@ -74,6 +74,9 @@ async def held_command(
                 "WORKLOAD_NOT_HELD", "the workload is not held", ["no hold in force"], resource=kind
             )
         generation = hold.generation
+        reached, waiting = await ctx.services.coordinator.all_reached(generation, ActorState.HELD)
+        if not reached:
+            return Stop("WORKLOAD_NOT_HELD", "the workload is not stopped", waiting, resource=kind)
         await keep_evidence_alive(ctx, generation)
     tx = transition_id(ctx, kind)
 

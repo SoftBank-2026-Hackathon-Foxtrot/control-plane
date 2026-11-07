@@ -77,7 +77,7 @@ async def test_each_stage_that_cannot_be_undone_waits_for_a_person(world: World)
     assert "FINALIZE" not in actions(world, ResourceKind.REDIS)
 
 
-async def test_only_the_database_cutover_stops_the_workload(world: World) -> None:
+async def test_database_and_redis_cutovers_stop_the_workload(world: World) -> None:
     workflow = await world.start()
     held_during: set[int] = set()
 
@@ -93,7 +93,7 @@ async def test_only_the_database_cutover_stops_the_workload(world: World) -> Non
         if hold.desired is HoldDesired.HOLD:
             held_during.add((await world.workflow(workflow.id)).current_stage)
 
-    assert held_during == {DB_STAGE}
+    assert held_during == {REDIS_STAGE, DB_STAGE}
     assert (await world.services.coordinator.hold()).desired is HoldDesired.RUN
 
 

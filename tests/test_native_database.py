@@ -118,7 +118,7 @@ def test_reverse_replication_rejects_legacy_profiles(profile: str) -> None:
     if profile == DMS_PROFILE:
         database["replicationRef"] = "dms:goods"
         database["catalog"]["dmsJob"] = {"job": "old"}
-    with pytest.raises(ValidationError, match="needs the atomic logical v2 profile"):
+    with pytest.raises(ValidationError, match="needs the self-managed or atomic v2 profile"):
         Seed.model_validate(raw)
 
 

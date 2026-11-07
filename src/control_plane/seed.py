@@ -13,10 +13,11 @@ from typing import Any, Final, Literal, Self
 import yaml
 from pydantic import Field, model_validator
 
-from control_plane.domain.models import Model, ResourceKind
+from control_plane.domain.models import Endpoint, Model, ResourceKind
 
 MANAGED_LOGICAL_PROFILE: Final = "postgres-managed-logical-pgbouncer-v1"
 ATOMIC_LOGICAL_PROFILE: Final = "postgres-managed-logical-pgbouncer-v2"
+SELF_LOGICAL_PROFILE: Final = "postgres-logical-pgbouncer-v1"
 DMS_PROFILE: Final = "gcp-dms-postgres-pgbouncer-v1"
 
 
@@ -43,21 +44,50 @@ class DatabaseCatalog(Model):
     app_ref: str
 
 
+class AdapterEndpoint(Model):
+    url: str
+    token_secret: str
+    verify: bool | str = True
+
+
+class DatabaseSchema(Model):
+    tables: list[str] = Field(min_length=1)
+    sequences: list[str] = Field(default_factory=list)
+
+
 class ResourceSeed(Model):
-    source_ref: str
-    target_ref: str
+    source_ref: str | None = None
+    target_ref: str | None = None
+    source: Endpoint | None = None
+    target: Endpoint | None = None
+    adapter: AdapterEndpoint | None = None
     policy: Policy
     binding_ref: str | None = None
     replication_ref: str | None = None
     expected_apps: int | None = Field(default=None, ge=1)
     catalog: DatabaseCatalog | None = None
     direct_when_idle: bool = False
-    """Redis only: the application connects directly outside a migration and is moved onto the
-    proxy before PREPARE and off it after FINALIZE or an abort (Redis design 3-8)."""
+    """Retained only to reject obsolete temporary-proxy configuration explicitly."""
+
+    @model_validator(mode="after")
+    def endpoint_inputs(self) -> Self:
+        if self.direct_when_idle:
+            raise ValueError("directWhenIdle is no longer supported: applications always use proxy")
+        if self.source is not None or self.target is not None:
+            if self.source is None:
+                raise ValueError("source is required before configuring a target")
+            if self.source_ref is not None or self.target_ref is not None:
+                raise ValueError("use endpoint objects or legacy refs, not both")
+        elif self.source_ref is None or self.target_ref is None:
+            raise ValueError("source and target endpoints are required (legacy refs are accepted)")
+        return self
 
 
 class DatabaseSeed(ResourceSeed):
+    gate_namespace: str | None = None
+    schema_config: DatabaseSchema | None = Field(default=None, alias="schema")
     profile: Literal[
+        "postgres-logical-pgbouncer-v1",
         "postgres-managed-logical-pgbouncer-v2",
         "postgres-managed-logical-pgbouncer-v1",
         "gcp-dms-postgres-pgbouncer-v1",
@@ -65,20 +95,37 @@ class DatabaseSeed(ResourceSeed):
 
     @model_validator(mode="after")
     def replication(self) -> Self:
-        if self.catalog is None:
+        if self.source is None and self.catalog is None:
             raise ValueError("database needs catalog")
+        if self.source is not None:
+            if self.schema_config is None:
+                raise ValueError("direct database input needs schema.tables")
+            if not self.source.writer_role or (self.target and not self.target.writer_role):
+                raise ValueError("database endpoints need writerRole")
+            if self.profile == DMS_PROFILE:
+                raise ValueError("direct endpoint input uses the logical replication profiles")
+            if (
+                "profile" not in self.model_fields_set
+                and self.source.provider in {None, "SELF_MANAGED"}
+                and (self.target is None or self.target.provider in {None, "SELF_MANAGED"})
+            ):
+                self.profile = SELF_LOGICAL_PROFILE
         if self.profile == DMS_PROFILE:
-            if not self.replication_ref or not self.catalog.dms_job:
+            if not self.replication_ref or not self.catalog or not self.catalog.dms_job:
                 raise ValueError("DMS profile needs replicationRef and catalog.dmsJob")
-        elif self.replication_ref is not None or self.catalog.dms_job is not None:
+        elif self.replication_ref is not None or (
+            self.catalog and self.catalog.dms_job is not None
+        ):
             raise ValueError("managed logical profile rejects replicationRef and catalog.dmsJob")
         if self.policy.rollback_mode not in {"BEFORE_TARGET_WRITE", "REVERSE_REQUIRED"}:
             raise ValueError("unsupported database rollbackMode")
-        if (
-            self.policy.rollback_mode == "REVERSE_REQUIRED"
-            and self.profile != ATOMIC_LOGICAL_PROFILE
-        ):
-            raise ValueError("database REVERSE_REQUIRED needs the atomic logical v2 profile")
+        if self.policy.rollback_mode == "REVERSE_REQUIRED" and self.profile not in {
+            ATOMIC_LOGICAL_PROFILE,
+            SELF_LOGICAL_PROFILE,
+        }:
+            raise ValueError(
+                "database REVERSE_REQUIRED needs the self-managed or atomic v2 profile"
+            )
         budget = self.policy.max_quiesce_seconds
         if not 1 <= budget <= 300 or not budget.is_integer():
             raise ValueError("database maxQuiesceSeconds must be an integer from 1 to 300")
@@ -92,7 +139,9 @@ class Resources(Model):
 
     @model_validator(mode="after")
     def complete(self) -> Self:
-        if self.redis.binding_ref is None or self.object.binding_ref is None:
+        if (
+            self.redis.source is None and self.redis.binding_ref is None
+        ) or self.object.binding_ref is None:
             raise ValueError("redis and object need bindingRef")
         if self.object.expected_apps is None:
             raise ValueError("object needs expectedApps: with none reporting, no guard applies")
@@ -106,13 +155,6 @@ class Resources(Model):
             ResourceKind.REDIS: self.redis,
             ResourceKind.OBJECT_STORAGE: self.object,
         }[kind]
-
-
-class AdapterEndpoint(Model):
-    url: str
-    token_secret: str
-    verify: bool | str = True
-    """TLS verification: true, false for plain local setups, or a CA bundle path."""
 
 
 class Adapters(Model):
@@ -197,6 +239,9 @@ class Seed(Model):
 
     def all_actors(self) -> dict[str, int]:
         return {a: n for env in self.environments.values() for a, n in env.actors.items()}
+
+    def adapter(self, kind: ResourceKind) -> AdapterEndpoint:
+        return self.resources.of(kind).adapter or self.adapters.of(kind)
 
 
 def load_seed(path: str | Path) -> Seed:

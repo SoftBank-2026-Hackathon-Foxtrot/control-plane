@@ -76,6 +76,40 @@ class Repository:
     def __init__(self, table: Table) -> None:
         self.table = table
 
+    async def application_binding(
+        self, application: str, kind: ResourceKind
+    ) -> dict[str, Any] | None:
+        item = await self.table.get(f"APPLICATION#{application}", f"BINDING#{kind.value}")
+        return dict(json.loads(item.body)) if item else None
+
+    async def save_application_binding(
+        self,
+        application: str,
+        kind: ResourceKind,
+        binding: dict[str, Any],
+        *,
+        migration_id: str | None = None,
+    ) -> None:
+        pk, sk = f"APPLICATION#{application}", f"BINDING#{kind.value}"
+        for _ in range(5):
+            item = await self.table.get(pk, sk)
+            saved = dict(json.loads(item.body)) if item else {}
+            previous_id = saved.get("lastMigrationId")
+            saved.update({key: value for key, value in binding.items() if key != "lastMigrationId"})
+            if migration_id or previous_id:
+                saved["lastMigrationId"] = migration_id or previous_id
+            try:
+                await self.table.put(
+                    pk,
+                    sk,
+                    json.dumps(saved),
+                    expected_version=item.version if item else 0,
+                )
+            except VersionConflict:
+                continue
+            return
+        raise VersionConflict(f"binding {application}/{kind.value}")
+
     # ---- workflows ---------------------------------------------------------------------------
     async def create_workflow(self, workflow: Workflow) -> None:
         """Takes the single active slot first, so two requests cannot both start a migration."""
