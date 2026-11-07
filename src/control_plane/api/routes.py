@@ -125,8 +125,11 @@ async def workspaces(session: CurrentSession) -> list[Workspace]:
 
 # ---- what is managed -------------------------------------------------------------------------
 @router.get("/v1/applications", response_model_by_alias=True)
-async def applications(_: CurrentSession, context: Context) -> list[ApplicationView]:
+async def applications(session: CurrentSession, context: Context) -> list[ApplicationView]:
     seed = context.seed
+    from control_plane.deployment.api import registered
+
+    extra = await registered(context, str(session.user.id))
     return [
         ApplicationView(
             id=seed.application,
@@ -137,6 +140,15 @@ async def applications(_: CurrentSession, context: Context) -> list[ApplicationV
             ],
             resources=[kind for kind in ResourceKind if kind in seed.managed],
         )
+    ] + [
+        ApplicationView(
+            id=app["id"],
+            scope=f"application:{app['id']}",
+            environments=[],
+            resources=list(ResourceKind),
+        )
+        for app in extra
+        if app["id"] != seed.application
     ]
 
 
@@ -245,11 +257,6 @@ async def workflow_command(
         success_status=200,
         execute=execute,
     )
-
-
-@router.api_route("/v1/provisioning/{path:path}", methods=["GET", "POST"], include_in_schema=False)
-async def provisioning(_: CurrentSession, path: str) -> None:
-    raise ApiError(501, "NOT_IMPLEMENTED", f"provisioning is reserved, not built: {path}")
 
 
 # ---- called by the application's own processes -------------------------------------------------

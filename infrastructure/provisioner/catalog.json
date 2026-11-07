@@ -1,0 +1,14 @@
+{
+  "templates": {
+    "chiikawa-groupbuy": {
+      "description": "치이카와 LIVE 공구앱: FastAPI API + 큐 worker, PostgreSQL 17, Redis, 영수증 버킷",
+      "app": {
+        "port": 80,
+        "api_workers": 4,
+        "worker_count": 2,
+        "seed_demo_data": false,
+        "seed_close_in_s": 86400
+      }
+    }
+  }
+}

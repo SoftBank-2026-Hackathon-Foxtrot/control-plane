@@ -1,0 +1,431 @@
+openapi: 3.1.0
+info:
+  title: Foxtrot Managed Provisioning — DRAFT
+  version: 0.3.0
+  description: Source and target code, baseline, state and credentials are already managed by the platform. Only target sizing
+    can change. Specification only; no API or runner implemented. See docs/provisioning-interface.md.
+servers:
+- url: /api/v1/provisioning
+security:
+- platformBearer: []
+paths:
+  /migrations/{migration_id}:
+    get:
+      operationId: getProvisioningContext
+      summary: 관리 중인 원본·대상과 조정 가능한 사양 조회
+      parameters:
+      - $ref: '#/components/parameters/MigrationId'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Context'
+        default:
+          $ref: '#/components/responses/Error'
+  /migrations/{migration_id}/plans:
+    post:
+      operationId: createPlan
+      summary: 대상 baseline에 변경값을 병합해 plan 생성
+      parameters:
+      - $ref: '#/components/parameters/MigrationId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Poll job for result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanRequest'
+  /plans/{plan_id}/apply:
+    post:
+      operationId: applyPlan
+      summary: 검토한 불변 saved plan 실행; 요청 본문 없음
+      parameters:
+      - $ref: '#/components/parameters/PlanId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Poll job for result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+  /jobs/{job_id}:
+    get:
+      operationId: getJob
+      summary: 진행 상태와 plan 또는 인프라 출력 조회
+      parameters:
+      - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        default:
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    platformBearer:
+      type: http
+      scheme: bearer
+      description: Reuse platform auth; authorize migration/plan/job references and target execution on every request.
+  parameters:
+    MigrationId:
+      name: migration_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-zA-Z0-9_-]{3,100}$
+    PlanId:
+      name: plan_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-zA-Z0-9_-]{3,100}$
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[a-zA-Z0-9_-]{3,100}$
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+      description: PLAN/APPLY retries with the same key and body return the same job; changed body is 409. A plan executes
+        at most once even with a new key.
+  responses:
+    Error:
+      description: 400 malformed; 401 unauthenticated; 403 forbidden; 404 unknown reference; 409 stale/blocked/busy/idempotency
+        conflict; 422 invalid sizing; 429 limited; 500/503 unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    AwsSizing:
+      type: object
+      additionalProperties: false
+      properties:
+        compute_instance_type:
+          type: string
+          enum:
+          - t3.small
+          - t3.medium
+          - m6i.large
+        compute_disk_gib:
+          type: integer
+          minimum: 20
+          maximum: 200
+        db_instance_class:
+          type: string
+          enum:
+          - db.t3.micro
+          - db.t3.small
+          - db.m6g.large
+        db_storage_gib:
+          type: integer
+          minimum: 20
+          maximum: 200
+        db_max_storage_gib:
+          type: integer
+          minimum: 22
+          maximum: 500
+        db_multi_az:
+          type: boolean
+        cache_node_type:
+          type: string
+          enum:
+          - cache.t3.micro
+          - cache.t3.small
+          - cache.m6g.large
+        cache_node_count:
+          type: integer
+          minimum: 1
+          maximum: 3
+      required: []
+    GcpSizing:
+      type: object
+      additionalProperties: false
+      properties:
+        compute_machine_type:
+          type: string
+          enum:
+          - e2-small
+          - e2-medium
+          - e2-standard-2
+        compute_disk_gib:
+          type: integer
+          minimum: 20
+          maximum: 200
+        db_tier:
+          type: string
+          enum:
+          - db-custom-1-3840
+          - db-custom-2-7680
+          - db-custom-4-15360
+        db_storage_gib:
+          type: integer
+          minimum: 20
+          maximum: 200
+        db_max_storage_gib:
+          type: integer
+          minimum: 22
+          maximum: 500
+        db_high_availability:
+          type: boolean
+        cache_memory_gib:
+          type: integer
+          minimum: 1
+          maximum: 16
+        cache_high_availability:
+          type: boolean
+      required: []
+    Sizing:
+      description: Partial sizing only. Server validates the TARGET cloud and merged baseline. Omitted fields retain managed
+        values.
+      anyOf:
+      - $ref: '#/components/schemas/AwsSizing'
+      - $ref: '#/components/schemas/GcpSizing'
+    Environment:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        cloud:
+          type: string
+          enum:
+          - aws
+          - gcp
+      required:
+      - id
+      - cloud
+    Context:
+      type: object
+      additionalProperties: false
+      properties:
+        migration_id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        source:
+          $ref: '#/components/schemas/Environment'
+        target:
+          $ref: '#/components/schemas/Environment'
+        target_sizing:
+          $ref: '#/components/schemas/Sizing'
+        sizing_schema:
+          type: object
+          description: Standalone JSON Schema for the target's editable fields, from the reviewed catalog.
+      required:
+      - migration_id
+      - source
+      - target
+      - target_sizing
+      - sizing_schema
+    PlanRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        overrides:
+          $ref: '#/components/schemas/Sizing'
+      required:
+      - overrides
+    ResourceChange:
+      type: object
+      additionalProperties: false
+      properties:
+        address:
+          type: string
+        action:
+          type: string
+          enum:
+          - CREATE
+          - UPDATE
+          - DELETE
+          - REPLACE
+          - NO_OP
+        summary:
+          type: string
+          description: Redacted change and interruption implications; never raw provider data.
+      required:
+      - address
+      - action
+      - summary
+    Plan:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        migration_id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        target:
+          $ref: '#/components/schemas/Environment'
+        status:
+          type: string
+          enum:
+          - REVIEWABLE
+          - BLOCKED
+        effective_sizing:
+          $ref: '#/components/schemas/Sizing'
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceChange'
+        warnings:
+          type: array
+          items:
+            type: string
+        blockers:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - migration_id
+      - target
+      - status
+      - effective_sizing
+      - changes
+      - warnings
+      - blockers
+      - expires_at
+    Handoff:
+      type: object
+      additionalProperties: false
+      properties:
+        migration_id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        target:
+          $ref: '#/components/schemas/Environment'
+        readiness:
+          const: INFRA_APPLIED
+        outputs:
+          type: object
+          additionalProperties: false
+          description: 'Only terraform output -json handoff (schema_version 1). Native fields: docs/platform-contract.md and
+            root outputs.tf. Never full state, plan or credentials.'
+          required:
+          - schema_version
+          - cloud
+          - deployment_id
+          - compute
+          - database
+          - cache
+          - storage
+          - network
+          - metadata
+          - pending_checks
+          properties:
+            schema_version:
+              const: 1
+            cloud:
+              type: string
+              enum:
+              - aws
+              - gcp
+            deployment_id:
+              type: string
+            compute:
+              type: object
+            database:
+              type: object
+            cache:
+              type: object
+            storage:
+              type: object
+            network:
+              type: object
+            metadata:
+              type: object
+            pending_checks:
+              type: array
+              items:
+                type: string
+      required:
+      - migration_id
+      - target
+      - readiness
+      - outputs
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+      required:
+      - code
+      - message
+    Job:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        migration_id:
+          type: string
+          pattern: ^[a-zA-Z0-9_-]{3,100}$
+        type:
+          type: string
+          enum:
+          - PLAN
+          - APPLY
+        status:
+          type: string
+          enum:
+          - QUEUED
+          - RUNNING
+          - SUCCEEDED
+          - FAILED
+          - NEEDS_RECONCILIATION
+        message:
+          type: string
+        result:
+          oneOf:
+          - $ref: '#/components/schemas/Plan'
+          - $ref: '#/components/schemas/Handoff'
+          - type: 'null'
+        error:
+          oneOf:
+          - $ref: '#/components/schemas/Error'
+          - type: 'null'
+      required:
+      - id
+      - migration_id
+      - type
+      - status
+      - message
+      - result
+      - error

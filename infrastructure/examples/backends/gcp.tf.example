@@ -1,0 +1,6 @@
+terraform {
+  backend "gcs" {
+    bucket = "replace-with-existing-state-bucket"
+    prefix = "foxtrot/gcp/replace-deployment-id"
+  }
+}

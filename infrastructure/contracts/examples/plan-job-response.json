@@ -1,0 +1,39 @@
+{
+  "id": "job_plan_001",
+  "migration_id": "mig_to_gcp",
+  "type": "PLAN",
+  "status": "SUCCEEDED",
+  "message": "대상 계획을 확인해 주세요.",
+  "result": {
+    "id": "plan_001",
+    "migration_id": "mig_to_gcp",
+    "target": {
+      "id": "env_gcp_target",
+      "cloud": "gcp"
+    },
+    "status": "REVIEWABLE",
+    "effective_sizing": {
+      "compute_machine_type": "e2-medium",
+      "compute_disk_gib": 30,
+      "db_tier": "db-custom-1-3840",
+      "db_storage_gib": 20,
+      "db_max_storage_gib": 100,
+      "db_high_availability": false,
+      "cache_memory_gib": 1,
+      "cache_high_availability": false
+    },
+    "changes": [
+      {
+        "address": "module.compute.google_compute_instance.this",
+        "action": "UPDATE",
+        "summary": "앱 VM 사양 변경. 대상 VM 정지가 필요할 수 있어 트래픽 전환 전에 실행."
+      }
+    ],
+    "warnings": [
+      "가상의 일부 변경 예시. 실제 응답은 모든 자원 변경을 포함해야 함."
+    ],
+    "blockers": [],
+    "expires_at": "2026-11-03T00:16:00Z"
+  },
+  "error": null
+}

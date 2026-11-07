@@ -7,3 +7,13 @@ __pycache__
 .env
 tests
 docs
+
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfplan
+**/*.tfvars
+**/*.tfvars.json
+!**/*.example.tfvars.json
+infrastructure/provisioner/config.json
+infrastructure/observability/.env

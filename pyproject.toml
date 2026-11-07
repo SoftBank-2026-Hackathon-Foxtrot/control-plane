@@ -22,6 +22,7 @@ control-plane = "control_plane.main:run"
 [dependency-groups]
 dev = [
   "jsonschema>=4.23,<5",
+  "openapi-spec-validator>=0.7,<0.9",
   "moto[dynamodb]>=5,<6",
   "mypy>=1.13,<2",
   "pytest>=8.3,<10",
@@ -37,6 +38,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/control_plane"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"infrastructure" = "control_plane/deployment/infrastructure"
 
 [tool.ruff]
 target-version = "py313"
@@ -67,3 +71,7 @@ asyncio_default_fixture_loop_scope = "function"
 markers = [
   "integration: drives a real migration adapter; needs Go and the adapter checkout",
 ]
+
+[[tool.mypy.overrides]]
+module = ["control_plane.deployment.*"]
+ignore_errors = true

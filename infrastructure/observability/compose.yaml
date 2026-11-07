@@ -1,0 +1,51 @@
+name: foxtrot-observability
+services:
+  collector-init:
+    image: busybox:1.37.0
+    user: "0:0"
+    command: ["chown", "10001:10001", "/var/lib/otelcol"]
+    volumes: ["collector-data:/var/lib/otelcol"]
+    restart: "no"
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.147.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      OTEL_INGEST_TOKEN: ${OTEL_INGEST_TOKEN:?set a module ingest token}
+      OBSERVATION_TOKEN: ${OBSERVATION_TOKEN:?set a separate CP ingest token}
+      CONTROL_PLANE_OTLP_LOGS_ENDPOINT: ${CONTROL_PLANE_OTLP_LOGS_ENDPOINT:?set the CP OTLP logs URL}
+    ports: ["${OTEL_BIND_HOST:-127.0.0.1}:${OTEL_PORT:-4318}:4318"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./collector.yaml:/etc/otelcol/config.yaml:ro
+      - collector-data:/var/lib/otelcol
+    depends_on:
+      collector-init:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+    mem_limit: 384m
+    restart: unless-stopped
+  prometheus:
+    image: prom/prometheus:v3.9.1
+    command: ["--config.file=/etc/prometheus/prometheus.yaml", "--web.enable-otlp-receiver", "--storage.tsdb.retention.time=24h", "--storage.tsdb.retention.size=1GB"]
+    ports: ["127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"]
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    mem_limit: 512m
+    restart: unless-stopped
+  tempo:
+    image: grafana/tempo:2.9.0
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports: ["127.0.0.1:${TEMPO_PORT:-3200}:3200"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    mem_limit: 512m
+    restart: unless-stopped
+volumes:
+  collector-data:
+  prometheus-data:
+  tempo-data:

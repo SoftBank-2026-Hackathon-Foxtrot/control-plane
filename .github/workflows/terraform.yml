@@ -1,0 +1,27 @@
+name: Validate IaC (no cloud deployment)
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        directory: [environments/aws, environments/gcp, environments/tailscale/aws, environments/tailscale/gcp, modules/tailscale_bootstrap, modules/app_migration_worker, environments/foundation/aws, environments/foundation/gcp, environments/platform/aws]
+    defaults:
+      run:
+        working-directory: infrastructure/${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.13.5'
+      - run: terraform fmt -check -recursive "$GITHUB_WORKSPACE/infrastructure"
+      - run: terraform init -backend=false -input=false -lockfile=readonly
+      - run: terraform validate -no-color
+      - run: terraform test -no-color

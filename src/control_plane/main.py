@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from typing import Protocol
 
 import httpx
 import uvicorn
@@ -40,6 +43,12 @@ from control_plane.workload.coordinator import WorkloadCoordinator
 log = logging.getLogger(__name__)
 
 
+class DeploymentService(Protocol):
+    def recover(self) -> None: ...
+
+    def run_forever(self, stop: threading.Event) -> None: ...
+
+
 @dataclass
 class Platform:
     """Everything one process needs. Tests build it with fakes at the edges."""
@@ -50,6 +59,7 @@ class Platform:
     observation_loop: ObservationLoop
     public_probe_loop: PublicProbeLoop | None = None
     clients: list[httpx.AsyncClient] = field(default_factory=list)
+    deployment_service: DeploymentService | None = None
 
 
 def assemble(
@@ -175,6 +185,11 @@ def build_platform(settings: Settings) -> Platform:
     platform.public_probe_loop = PublicProbeLoop(
         repo, client(), clock, settings.public_probe_url, settings.public_probe_served_by
     )
+    if os.environ.get("PROVISIONER_CONFIG") or os.environ.get("PROVISIONER_CONFIG_JSON"):
+        from control_plane.deployment.provisioner.__main__ import build, load
+
+        catalog, config = load(None)
+        platform.deployment_service = build(config, catalog)
     platform.clients = clients
     return platform
 
@@ -191,6 +206,15 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         telemetry = get_telemetry("control-plane")
+        deploy_stop = threading.Event()
+        deploy_worker = None
+        if run_loops and platform.deployment_service is not None:
+            worker_service = platform.deployment_service
+            worker_service.recover()
+            deploy_worker = threading.Thread(
+                target=worker_service.run_forever, args=(deploy_stop,), daemon=True
+            )
+            deploy_worker.start()
         tasks = (
             [
                 asyncio.create_task(platform.engine.run()),
@@ -205,6 +229,9 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
         try:
             yield
         finally:
+            deploy_stop.set()
+            if deploy_worker is not None:
+                await asyncio.to_thread(deploy_worker.join, 10)
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -222,6 +249,10 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
         openapi_url="/openapi.json" if docs else None,
     )
     app.state.context = platform.context
+    app.state.deployment_service = platform.deployment_service
+    from control_plane.deployment.api import router as deployment_router
+
+    app.include_router(deployment_router)
     app.include_router(router)
     app.include_router(otel_router)
     app.include_router(telemetry_router)

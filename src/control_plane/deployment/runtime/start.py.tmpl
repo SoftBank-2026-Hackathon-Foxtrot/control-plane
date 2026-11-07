@@ -1,0 +1,18 @@
+import base64
+import os
+import sys
+from urllib.parse import quote
+
+# Secret values arrive through ECS/Cloud Run secret references, never Terraform environment values.
+for key, value in list(os.environ.items()):
+    os.environ[key] = value.replace("__APP_DB_PASSWORD__", quote(os.environ["APP_DB_PASSWORD"], safe="")).replace(
+        "__STORAGE_SECRET__", os.environ.get("APP_STORAGE_SECRET", ""))
+
+exec(compile(base64.b64decode("${bootstrap}"), "bootstrap_db.py", "exec"), {})
+if sys.argv[1] == "api":
+    command = ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${port}", "--workers", "${api_workers}"]
+else:
+    command = ["python", "-m", "app.worker", "--name", sys.argv[1]]
+    if sys.argv[1] == "w1":
+        command.append("--reconciler")
+os.execvp(command[0], command)

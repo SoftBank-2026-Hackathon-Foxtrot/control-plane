@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "description": "PoC에서 검토할 후보 목록. 실시간 가격·리전 가용성·성능 동등성을 보장하지 않습니다.",
+  "clouds": {
+    "aws": {
+      "compute_instance_type": {
+        "type": "string",
+        "enum": [
+          "t3.small",
+          "t3.medium",
+          "m6i.large"
+        ]
+      },
+      "compute_disk_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_instance_class": {
+        "type": "string",
+        "enum": [
+          "db.t3.micro",
+          "db.t3.small",
+          "db.m6g.large"
+        ]
+      },
+      "db_storage_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_max_storage_gib": {
+        "type": "integer",
+        "minimum": 22,
+        "maximum": 500
+      },
+      "db_multi_az": {
+        "type": "boolean"
+      },
+      "cache_node_type": {
+        "type": "string",
+        "enum": [
+          "cache.t3.micro",
+          "cache.t3.small",
+          "cache.m6g.large"
+        ]
+      },
+      "cache_node_count": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 3
+      }
+    },
+    "gcp": {
+      "compute_machine_type": {
+        "type": "string",
+        "enum": [
+          "e2-small",
+          "e2-medium",
+          "e2-standard-2"
+        ]
+      },
+      "compute_disk_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_tier": {
+        "type": "string",
+        "enum": [
+          "db-custom-1-3840",
+          "db-custom-2-7680",
+          "db-custom-4-15360"
+        ]
+      },
+      "db_storage_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_max_storage_gib": {
+        "type": "integer",
+        "minimum": 22,
+        "maximum": 500
+      },
+      "db_high_availability": {
+        "type": "boolean"
+      },
+      "cache_memory_gib": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16
+      },
+      "cache_high_availability": {
+        "type": "boolean"
+      }
+    }
+  }
+}

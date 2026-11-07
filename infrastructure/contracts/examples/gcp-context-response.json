@@ -1,0 +1,71 @@
+{
+  "migration_id": "mig_to_gcp",
+  "source": {
+    "id": "env_aws_source",
+    "cloud": "aws"
+  },
+  "target": {
+    "id": "env_gcp_target",
+    "cloud": "gcp"
+  },
+  "target_sizing": {
+    "compute_machine_type": "e2-small",
+    "compute_disk_gib": 30,
+    "db_tier": "db-custom-1-3840",
+    "db_storage_gib": 20,
+    "db_max_storage_gib": 100,
+    "db_high_availability": false,
+    "cache_memory_gib": 1,
+    "cache_high_availability": false
+  },
+  "sizing_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "compute_machine_type": {
+        "type": "string",
+        "enum": [
+          "e2-small",
+          "e2-medium",
+          "e2-standard-2"
+        ]
+      },
+      "compute_disk_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_tier": {
+        "type": "string",
+        "enum": [
+          "db-custom-1-3840",
+          "db-custom-2-7680",
+          "db-custom-4-15360"
+        ]
+      },
+      "db_storage_gib": {
+        "type": "integer",
+        "minimum": 20,
+        "maximum": 200
+      },
+      "db_max_storage_gib": {
+        "type": "integer",
+        "minimum": 22,
+        "maximum": 500
+      },
+      "db_high_availability": {
+        "type": "boolean"
+      },
+      "cache_memory_gib": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16
+      },
+      "cache_high_availability": {
+        "type": "boolean"
+      }
+    },
+    "required": []
+  }
+}

@@ -1,0 +1,70 @@
+# Placeholder seed until the provisioner writes one for a real app (control-plane cannot start
+# without a seed). Addresses and refs below are examples; adapter URLs are the real platform names.
+application: goods
+scope: scope:goods
+
+environments:
+  aws:
+    appUrl: http://10.10.0.10:8000
+    trafficPool: aws  # an environment name in the traffic service's CF_POOL_IDS
+    actors: {goods-aws-api: 4, goods-aws-worker: 2}
+  gcp:
+    appUrl: http://10.20.0.10:8000
+    trafficPool: gcp
+    actors: {goods-gcp-api: 4, goods-gcp-worker: 2}
+
+resources:
+  database:
+    profile: postgres-managed-logical-pgbouncer-v1
+    sourceRef: db:goods-rds
+    targetRef: db:goods-cloudsql
+    policy: {rollbackMode: BEFORE_TARGET_WRITE, maxQuiesceSeconds: 300}
+    catalog:
+      alias: appdb
+      appRef: app:goods
+      tables: [public.join_requests, public.orders, public.groupbuys, public.chat_messages]
+      sequences: []
+      databases:
+        db:goods-rds:
+          identity: AWS_RDS:arn:aws:rds:ap-northeast-2:123456789012:db:goods/appdb
+          provider: AWS_RDS
+          provider_instance: arn:aws:rds:ap-northeast-2:123456789012:db:goods
+          secret_ref: arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:goods-rds-REPLACE
+          writer_role: goods_writer
+          route_host: goods.example.ap-northeast-2.rds.amazonaws.com
+          database: appdb
+        db:goods-cloudsql:
+          identity: GCP_CLOUDSQL:projects/foxtrot/instances/goods/appdb
+          provider: GCP_CLOUDSQL
+          provider_instance: projects/foxtrot/instances/goods
+          secret_ref: arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:goods-sql-REPLACE
+          writer_role: goods_writer
+          route_host: 10.21.0.5
+          database: appdb
+  redis:
+    sourceRef: resource:aws
+    targetRef: resource:gcp
+    bindingRef: binding:redis-proxy
+    policy: {rollbackMode: REVERSE_REQUIRED, maxQuiesceSeconds: 1.8}
+  object:
+    sourceRef: resource:aws-receipts
+    targetRef: resource:gcp-receipts
+    bindingRef: binding:receipts
+    # Every API and worker process of both environments follows the route on its own.
+    expectedApps: 12
+    policy: {rollbackMode: REVERSE_REQUIRED, maxQuiesceSeconds: 30}
+
+adapters:
+  database: {url: "https://db-proxy.internal:8080", tokenSecret: "env:DB_ADAPTER_TOKEN", verify: "/tmp/foxtrot-ca.pem"}
+  redis: {url: "http://redis-migrator.internal:8090", tokenSecret: "env:REDIS_ADAPTER_TOKEN"}
+  object: {url: "http://object-migration.internal:8080", tokenSecret: "env:OBJECT_ADAPTER_TOKEN"}
+
+probe:
+  user: probe-platform
+  groupbuyId: 1
+  # Set this once the application has the path (docs/app-integration.md). Until then probe orders
+  # stay in the database, so give the probe's group buy enough stock.
+  cleanupPath: null
+
+canaryWeights: [5]
+trafficWeights: [25, 50, 100]
