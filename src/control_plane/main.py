@@ -256,6 +256,9 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     app.include_router(router)
     app.include_router(otel_router)
     app.include_router(telemetry_router)
+    from control_plane.security_review.api import router as security_review_router
+
+    app.include_router(security_review_router)
     app.add_middleware(TraceMiddleware, telemetry=get_telemetry("control-plane"))
 
     @app.exception_handler(ApiError)

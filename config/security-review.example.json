@@ -1,0 +1,12 @@
+{
+  "application": "goods",
+  "allowedUserIds": ["github:REPLACE_ID"],
+  "awsRole": "chiikawa-aws-REPLACE-app",
+  "awsPolicy": "workload-bucket",
+  "awsBucket": "foxtrot-chiikawa-aws-replace",
+  "gcpBucket": "foxtrot-chiikawa-gcp-replace",
+  "extraBucket": "foxtrot-security-demo-replace",
+  "gcpPrincipal": "serviceAccount:chiikawa-gcp-replace-app@replace-project.iam.gserviceaccount.com",
+  "gcpCredentialsRef": "env:SECURITY_GCP_CREDENTIALS",
+  "mode": "cloud"
+}
