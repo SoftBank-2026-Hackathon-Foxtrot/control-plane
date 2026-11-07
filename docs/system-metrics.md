@@ -19,6 +19,8 @@ systemDeployments:
 
 `GET /v1/applications/{app}/system-metrics/deployments`는 최근 30초 이내 수집된 등록 대상만 반환합니다. 공용 대상은 `environmentId: shared:env-…`, `access: shared`, 개인 대상은 `access: personal`입니다. 선택한 값을 `/instances`와 시계열 API의 `deployment`에 그대로 전달합니다.
 
+화면의 배포 선택은 `?include_inactive=true`를 사용합니다. 이 경우 수집 전·중단된 등록 대상도 반환하며 `collection`은 `REPORTING`, `NOT_REPORTING`, `UNKNOWN`입니다. 백엔드 오류나 미설정은 `UNKNOWN`이며 수집 정상으로 표시하지 않습니다. 개인 배포의 소유권 검사와 삭제 대상 제외, 공용 등록 범위는 동일합니다. 이 옵션은 인스턴스·시계열의 조회 범위를 넓히지 않습니다.
+
 모든 조회는 `application.id`, `foxtrot.owner.id`, `deployment.id`, `deployment.environment.name`, `service.name=foxtrot-app-runtime`으로 한정합니다. 시계열은 `service.instance.id`까지 한정합니다. 같은 앱 이름이나 같은 소유자라는 이유로 다른 배포를 포함하지 않습니다.
 
 ## 운영 반영

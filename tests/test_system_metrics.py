@@ -214,6 +214,16 @@ async def test_live_deployments_match_owner_cloud_and_recent_heartbeat(world, mo
         assert "time() - 30" in queries[0]
         assert records["env-own-aws"]["org_id"] in queries[0]
         assert 'application_id="goods"' in queries[0]
+        response = await client.get(
+            "/v1/applications/goods/system-metrics/deployments",
+            params={"include_inactive": True},
+        )
+        assert {
+            row["environmentId"]: row["collection"] for row in response.json()["environments"]
+        } == {
+            "env-own-aws": "REPORTING",
+            "env-own-onprem": "NOT_REPORTING",
+        }
 
         async def unavailable(*args):
             return "UNAVAILABLE", {}
@@ -379,3 +389,32 @@ def test_shared_registry_rejects_ambiguous_or_unregistered_configuration(world, 
         first["ownerId"] = ""
     with pytest.raises(ValidationError):
         Seed.model_validate(body)
+
+
+async def test_registered_deployments_remain_visible_without_samples(world, monkeypatch):
+    register_shared(world)
+
+    async def backend(*args):
+        return "OK", {"status": "success", "data": {"resultType": "vector", "result": []}}
+
+    monkeypatch.setattr(metrics, "read_backend", backend)
+    async with await client_for(world) as client:
+        client._transport.app.state.deployment_service = None
+        root = "/v1/applications/goods/system-metrics/deployments"
+        assert (await client.get(root)).json()["environments"] == []
+        body = (await client.get(root, params={"include_inactive": True})).json()
+        assert body["state"] == "OK"
+        assert [row["environmentId"] for row in body["environments"]] == [
+            "shared:env-123456789abc",
+            "shared:env-abcdef123456",
+        ]
+        assert all(row["collection"] == "NOT_REPORTING" for row in body["environments"])
+
+        async def unavailable(*args):
+            return "UNAVAILABLE", {}
+
+        monkeypatch.setattr(metrics, "read_backend", unavailable)
+        body = (await client.get(root, params={"include_inactive": True})).json()
+        assert body["state"] == "UNAVAILABLE"
+        assert len(body["environments"]) == 2
+        assert all(row["collection"] == "UNKNOWN" for row in body["environments"])
