@@ -84,3 +84,20 @@ async def test_registered_snapshot_runs_on_existing_engine_after_restart(world: 
     assert finished.status == WorkflowStatus.COMPLETED, finished.halt
     assert finished.application_snapshot["image"]["imageRef"] == IMAGE
     assert finished.owner_id == "alice"
+
+
+async def test_policy_cannot_reverse_resource_refs_and_caps_pause(world: World) -> None:
+    from control_plane.applications import MigrationPolicy, bind_configuration
+    from control_plane.governance import enforce, set_policy
+
+    service = ApplicationService(world.repo, world.clock)
+    app = await service.create("alice", ApplicationInput(name="goods", image={"imageRef": IMAGE}))
+    app = await bind_configuration(service, "alice", app.id, app.version, world.seed)
+    with pytest.raises(ApiError, match="direction"):
+        enforce(app, "gcp", "aws")
+    app = await set_policy(service, app, MigrationPolicy(max_quiesce_seconds=60), app.version)
+    bounded = enforce(app, "aws", "gcp")
+    assert bounded.resources.database.policy.max_quiesce_seconds == 60
+    assert bounded.resources.redis.policy.max_quiesce_seconds == 1.8
+    page = await world.table.query(f"APP_AUDIT#alice#{app.id}")
+    assert len(page.items) >= 3

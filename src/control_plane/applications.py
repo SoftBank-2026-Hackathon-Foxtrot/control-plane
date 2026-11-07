@@ -104,7 +104,17 @@ class ApplicationService:
             raise ApiError(
                 409, "VERSION_CONFLICT", "read the latest application version"
             ) from error
+        await self.audit(app, "APPLICATION_SAVED", {"version": version, "status": app.status})
         return app.model_copy(update={"version": version})
+
+    async def audit(self, app: Application, event: str, details: dict[str, object]) -> None:
+        at = self.clock.now().isoformat()
+        await self.repo.table.put(
+            f"APP_AUDIT#{app.owner_id}#{app.id}",
+            f"{at}#{secrets.token_hex(6)}",
+            json.dumps({"type": event, "at": at, "actor": app.owner_id, **details}),
+            expected_version=0,
+        )
 
     async def update(
         self, owner: str, app_id: str, body: ApplicationInput, expected_version: int

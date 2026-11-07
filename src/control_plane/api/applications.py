@@ -8,6 +8,7 @@ from control_plane.applications import (
     ApplicationInput,
     ApplicationService,
     ConfigurationInput,
+    MigrationPolicy,
     bind_configuration,
 )
 from control_plane.catalog import catalog_for
@@ -188,3 +189,62 @@ async def verify(
         success_status=200,
         execute=execute,
     )
+
+
+@router.get("/v1/applications/{app_id}/policy")
+async def policy(app_id: str, session: CurrentSession, context: Context) -> object:
+    return (await service(context).get(session.user.id, app_id)).policy
+
+
+class PolicyInput(ConfigurationInput):
+    policy: MigrationPolicy
+
+
+@router.put("/v1/applications/{app_id}/policy")
+async def change_policy(
+    app_id: str,
+    body: PolicyInput,
+    session: CheckedSession,
+    context: Context,
+    idempotency_key: str | None = Header(default=None),
+) -> object:
+    from control_plane.governance import set_policy
+
+    async def execute() -> object:
+        app = await service(context).get(session.user.id, app_id)
+        saved = await set_policy(service(context), app, body.policy, body.expected_version)
+        await service(context).audit(saved, "POLICY_CHANGED", {"version": saved.version})
+        return saved
+
+    return await once(
+        context.repo,
+        user_id=session.user.id,
+        path=f"/v1/applications/{app_id}/policy",
+        key=idempotency_key,
+        body=body.model_dump(),
+        success_status=200,
+        execute=execute,
+    )
+
+
+@router.get("/v1/applications/{app_id}/events")
+async def audit_events(
+    app_id: str,
+    session: CurrentSession,
+    context: Context,
+    after: str | None = None,
+    limit: int = 100,
+) -> object:
+    import json
+
+    from control_plane.errors import ApiError
+
+    await service(context).get(session.user.id, app_id)
+    if not 1 <= limit <= 500:
+        raise ApiError(422, "INVALID_LIMIT", "limit must be 1 to 500")
+    page = await context.repo.table.query(
+        f"APP_AUDIT#{session.user.id}#{app_id}",
+        after=after,
+        limit=limit,
+    )
+    return {"events": [json.loads(item.body) for item in page.items], "nextCursor": page.next_sk}

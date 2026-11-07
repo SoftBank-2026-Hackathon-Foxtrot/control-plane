@@ -39,6 +39,7 @@ from control_plane.applications import ApplicationService
 from control_plane.domain.models import ResourceKind, ResourceState, Session, Workflow
 from control_plane.engine.context import Services
 from control_plane.errors import ApiError
+from control_plane.governance import enforce
 from control_plane.seed import Seed
 from control_plane.workflows import CommandInput, WorkflowService
 from control_plane.workload.coordinator import WorkloadCoordinator
@@ -172,9 +173,19 @@ async def create_workflow(
             )
             if app.status != "VERIFIED" or app.configuration is None:
                 raise ApiError(409, "APP_NOT_VERIFIED", "verify the application first")
-            services = context.services.configured(app.configuration)
+            try:
+                configuration = enforce(app, body.source_env, body.target_env)
+            except ApiError as error:
+                await ApplicationService(context.repo, context.clock).audit(
+                    app,
+                    "POLICY_DENIED",
+                    {"reasonCode": error.code},
+                )
+                raise
+            app = app.model_copy(update={"configuration": configuration})
+            services = context.services.configured(configuration)
             selected = WorkflowService(
-                context.repo, app.configuration, context.clock, services.adapters
+                context.repo, configuration, context.clock, services.adapters
             )
             snapshot = app.model_dump(mode="json", by_alias=True)
         created = await selected.create(
