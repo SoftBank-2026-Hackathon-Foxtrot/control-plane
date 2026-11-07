@@ -5,7 +5,6 @@ The browser calls `/api/...`; the gateway, or Vite in development, removes the p
 
 from __future__ import annotations
 
-import asyncio
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
@@ -19,7 +18,7 @@ from control_plane.api.dependencies import (
     workload_caller,
 )
 from control_plane.api.idempotency import once
-from control_plane.api.resource_observations import read_resource
+from control_plane.api.resource_observations import read_resources
 from control_plane.api.schemas import (
     ActorView,
     ApplicationView,
@@ -179,13 +178,7 @@ async def get_workflow(workflow_id: str, _: CurrentSession, context: Context) ->
     # OTEL). Preserve that pipeline rather than overwriting it with direct polling.
     if "observation" in ResourceView.model_fields:
         return detail
-    resources = await asyncio.gather(
-        *(
-            read_resource(context, workflow, state)
-            for state in await context.repo.resources(workflow.id)
-        )
-    )
-    return detail.model_copy(update={"resources": list(resources)})
+    return detail.model_copy(update={"resources": await read_resources(context, workflow)})
 
 
 @router.get("/v1/workflows/{workflow_id}/events", response_model_by_alias=True)

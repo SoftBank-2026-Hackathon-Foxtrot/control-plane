@@ -190,3 +190,14 @@ async def read_resource(
     except (AdapterError, AdapterUnreachable, TimeoutError):
         # Do not expose URLs, tokens or response bodies through connection error strings.
         return project_resource(state, now=now, collection_error="MODULE_OBSERVATION_UNAVAILABLE")
+
+
+async def read_resources(context: ApiContext, workflow: Workflow) -> list[ObservedResourceView]:
+    return list(
+        await asyncio.gather(
+            *(
+                read_resource(context, workflow, state)
+                for state in await context.repo.resources(workflow.id)
+            )
+        )
+    )

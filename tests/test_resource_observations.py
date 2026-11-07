@@ -151,7 +151,7 @@ async def test_existing_observer_pipeline_is_returned_without_direct_repolling(
         ResourceView.model_fields, "observation", ResourceView.model_fields["observed_at"]
     )
     direct_reader = AsyncMock()
-    monkeypatch.setattr(routes, "read_resource", direct_reader)
+    monkeypatch.setattr(routes, "read_resources", direct_reader)
     result = await routes.get_workflow(workflow.id, None, world.platform.context)
     assert result is original
     direct_reader.assert_not_awaited()
