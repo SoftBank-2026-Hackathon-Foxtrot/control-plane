@@ -156,7 +156,7 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
         for field in ("worker_count", "api_workers"):
             count = app.get(field, 2 if field == "worker_count" else 4)
             require(
-                type(count) is int and (0 if field == "worker_count" else 1) <= count <= 8,
+                type(count) is int and 1 <= count <= 8,
                 f"invalid {field}",
             )
         app.setdefault("port", 80)

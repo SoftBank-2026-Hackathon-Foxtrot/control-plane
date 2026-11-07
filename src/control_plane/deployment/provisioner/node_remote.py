@@ -73,7 +73,10 @@ def inspect(rows, services):
         actual[name]["Config"]["Image"] == spec["image"] for name, spec in services.items()
     )
     healthy = (
-        running and matching and actual["api"]["State"].get("Health", {}).get("Status") == "healthy"
+        running
+        and matching
+        and any(name.startswith("worker-") for name in actual)
+        and actual["api"]["State"].get("Health", {}).get("Status") == "healthy"
     )
     return {
         "complete": complete,
@@ -121,6 +124,7 @@ def handle(payload):
         return {"released": True, "ready": False, "complete": False}
     if action == "destroy":
         if saved:
+            write_private(owner, {**saved, "destroying": True})
             if not config.exists():
                 if rows:
                     raise NodeFailure("MISSING_COMPOSE_CONFIGURATION")
@@ -136,6 +140,8 @@ def handle(payload):
         raise NodeFailure("REGISTERED_CONFIGURATION_CHANGED")
     docker("compose", "version", "--short")
     docker("network", "inspect", payload["network"])
+    if action == "inspect" and saved and not rows and not saved.get("destroying"):
+        return {"ownedEmpty": True, "ready": False, "complete": False}
     if action == "preflight":
         if not rows:
             check_address(payload["bindAddress"], payload["port"])
@@ -147,6 +153,10 @@ def handle(payload):
                 raise NodeFailure("NETWORK_CHECK_FAILED:" + check["name"]) from error
         return {"ready": True, "scope": "HOST_TO_REGISTERED_ENDPOINTS"}
     if action == "apply":
+        if payload.get("retryOwnedEmpty"):
+            if not saved or saved.get("destroying") or rows:
+                raise NodeFailure("RETRY_REQUIRES_EMPTY_OWNED_PROJECT")
+            check_address(payload["bindAddress"], payload["port"])
         folder.mkdir(parents=True, mode=0o700, exist_ok=True)
         if saved is None:
             fd = os.open(owner, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

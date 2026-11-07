@@ -30,6 +30,10 @@ RESOURCE_KEYS: Final[dict[ResourceKind, ResourceKey]] = {
 }
 
 
+class OnpremTargetUnconfirmed(ValueError):
+    """The selected direction has no unambiguous data target."""
+
+
 class Environment(Model):
     app_url: str
     traffic_pool: str
@@ -294,7 +298,12 @@ class Seed(Model):
             key = RESOURCE_KEYS[kind]
             if resource.source is not None:
                 continue
-            missing = [name for name, env in self.environments.items() if key not in env.resources]
+            # The demo node may be registered before its data targets. Validate those at PREPARE.
+            missing = [
+                name
+                for name, env in self.environments.items()
+                if name != "onprem" and key not in env.resources
+            ]
             if resource.refs_from_environments and missing:
                 raise ValueError(
                     f"{key} has no sourceRef/targetRef: environments {missing} need resources.{key}"
@@ -303,8 +312,8 @@ class Seed(Model):
                 known = resource.catalog.databases
                 unknown = [
                     env.resources[key]
-                    for env in self.environments.values()
-                    if key in env.resources and env.resources[key] not in known
+                    for name, env in self.environments.items()
+                    if name != "onprem" and key in env.resources and env.resources[key] not in known
                 ]
                 if unknown:
                     raise ValueError(f"database refs {unknown} are not in catalog.databases")
@@ -316,11 +325,28 @@ class Seed(Model):
         Refs listed by both environments win over the resource's own sourceRef/targetRef.
         Endpoint-object input is returned as it is."""
         resource = self.resources.of(kind)
-        if resource.source is not None:
-            return resource
         key = RESOURCE_KEYS[kind]
+        onprem = "onprem" in (source_env, target_env)
+        if resource.source is not None:
+            if onprem:
+                raise OnpremTargetUnconfirmed(f"provide explicit {key} endpoints for this workflow")
+            return resource
         source = self.environments[source_env].resources.get(key)
         target = self.environments[target_env].resources.get(key)
+        if onprem:
+            if not source or not target or source == target:
+                raise OnpremTargetUnconfirmed(
+                    f"configure distinct {key} refs in both workflow environments"
+                )
+            if (
+                kind is ResourceKind.DATABASE
+                and resource.catalog
+                and (
+                    source not in resource.catalog.databases
+                    or target not in resource.catalog.databases
+                )
+            ):
+                raise OnpremTargetUnconfirmed("register both database refs in the adapter catalog")
         if source is None or target is None:
             return resource
         return resource.model_copy(update={"source_ref": source, "target_ref": target})

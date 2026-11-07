@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from control_plane.domain.models import ResourceKind
+from control_plane.domain.models import ResourceKind, WorkflowStatus
 from control_plane.seed import Seed
 from tests.conftest import SEED, World
 
@@ -85,3 +85,77 @@ def test_environment_database_refs_must_be_in_the_catalog() -> None:
     raw["environments"]["gcp"]["resources"]["database"] = "db:somewhere-else"
     with pytest.raises(ValidationError, match=r"catalog\.databases"):
         Seed.model_validate(raw)
+
+
+def with_onprem(raw: dict[str, Any], refs: dict[str, str]) -> dict[str, Any]:
+    raw["environments"]["onprem"] = {
+        "appUrl": "http://onprem-app:80",
+        "trafficPool": "onprem",
+        "actors": {"onprem-api": 2, "onprem-worker": 1},
+        "resources": refs,
+    }
+    return raw
+
+
+@pytest.mark.parametrize("source,target", [("aws", "onprem"), ("onprem", "aws")])
+async def test_incomplete_onprem_refs_stop_before_any_adapter(source: str, target: str) -> None:
+    # Redis or DB can be missing even when object (the first adapter) is configured.
+    raw = with_onprem(copy.deepcopy(SEED), {"object": "resource:onprem-receipts"})
+    raw["environments"]["aws"]["resources"] = AWS_REFS
+    world = World(seed=raw)
+    workflow = await world.workflows.create(source_env=source, target_env=target, actor="tester")
+    await world.approve(workflow.id)
+    stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
+    assert stopped.halt and stopped.halt.code == "ONPREM_TARGET_UNCONFIRMED"
+    assert not any(adapter.migrations for adapter in world.adapters.values())
+    assert not world.db.bindings and world.gate.catalog_published == 0
+
+
+@pytest.mark.parametrize("source,target", [("aws", "onprem"), ("onprem", "aws")])
+async def test_onprem_adapter_plans_use_only_the_selected_environments(
+    source: str, target: str
+) -> None:
+    refs = {
+        "object": "resource:onprem-receipts",
+        "redis": "resource:onprem",
+        "database": "db:personal-vm",
+    }
+    raw = with_onprem(environment_seed(), refs)
+    raw["resources"]["database"]["catalog"]["databases"][refs["database"]] = {}
+    world = World(seed=raw)
+    workflow = await world.workflows.create(source_env=source, target_env=target, actor="tester")
+    await world.at_stage(workflow.id, 1)
+    a, b = (AWS_REFS, refs) if source == "aws" else (refs, AWS_REFS)
+    assert planned_refs(world) == {k: (a[k], b[k]) for k in a}
+
+
+@pytest.mark.parametrize("source,target", [("aws", "gcp"), ("gcp", "aws")])
+async def test_cloud_pair_keeps_working_with_an_unconfigured_demo_node(
+    source: str, target: str
+) -> None:
+    world = World(seed=with_onprem(environment_seed(), {}))
+    workflow = await world.workflows.create(source_env=source, target_env=target, actor="tester")
+    await world.at_stage(workflow.id, 1)
+    a, b = (AWS_REFS, GCP_REFS) if source == "aws" else (GCP_REFS, AWS_REFS)
+    assert planned_refs(world) == {k: (a[k], b[k]) for k in a}
+
+
+async def test_onprem_refs_cannot_change_after_preflight_or_restart() -> None:
+    raw = with_onprem(environment_seed(), {"object": "resource:onprem-receipts"})
+    raw["resources"] = {"object": raw["resources"]["object"]}
+    world = World(seed=raw)
+    workflow = await world.workflows.create(source_env="aws", target_env="onprem", actor="tester")
+    world.prober.ready = False
+    await world.approve(workflow.id)
+    await world.tick()
+    stage = (await world.repo.stages(workflow.id))[0]
+    assert stage.data["onpremResourceRefs"]["OBJECT_STORAGE"] == [
+        "resource:aws-receipts",
+        "resource:onprem-receipts",
+    ]
+    world.restart_engine_every_tick = True
+    world.prober.ready = True
+    world.seed.environments["onprem"].resources["object"] = "resource:gcp-receipts"
+    stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
+    assert stopped.halt and stopped.halt.code == "ONPREM_TARGET_UNCONFIRMED"
+    assert not world.object.migrations

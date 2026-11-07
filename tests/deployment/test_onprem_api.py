@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -15,7 +16,7 @@ from tests.conftest import SETTINGS
 from tests.deployment.test_node import executor
 from tests.deployment.test_node import node_config as node_config  # pytest fixture
 from tests.deployment.test_onprem import FakeDriver, fixture
-from tests.deployment.test_provisioner import CATALOG, ReadyChecker
+from tests.deployment.test_provisioner import CATALOG, CONFIG, ReadyChecker
 from tests.test_api import Console
 
 
@@ -75,7 +76,7 @@ async def test_session_preparation_deployment_and_retained_data_lifecycle(regist
     body = {
         "cloud": "onprem",
         "target": {"nodeId": "pc", "preparationId": prep_id},
-        "app": {"workerCount": 0},
+        "app": {"workerCount": 1},
     }
     early = await console.http.post(
         "/v1/applications/goods/deployments", json=body, headers=console.change_headers()
@@ -126,10 +127,13 @@ async def test_session_preparation_deployment_and_retained_data_lifecycle(regist
     assert cleanup.status_code == 202, cleanup.text
 
 
-async def test_deploy_for_requested_migration_after_preparing_the_node(registered_pc):
-    console, engine, _, _ = registered_pc
+@pytest.mark.parametrize("pull_fails", [False, True])
+async def test_deploy_for_requested_migration_after_preparing_the_node(registered_pc, pull_fails):
+    console, engine, runner, _ = registered_pc
     console.world.seed.environments["onprem"] = Environment(
-        app_url="http://onprem-app:80", traffic_pool="onprem", actors={"onprem-api": 1}
+        app_url="http://onprem-app:80",
+        traffic_pool="onprem",
+        actors={"goods-onprem-api": 2, "goods-onprem-worker": 1},
     )
     prepared = await console.http.post(
         "/v1/applications/goods/onprem-preparations",
@@ -166,17 +170,77 @@ async def test_deploy_for_requested_migration_after_preparing_the_node(registere
     }
     headers = console.change_headers()
     path = "/v1/applications/goods/deployments"
+    bad = await console.http.post(path, json={**body, "app": {"workerCount": 2}}, headers=headers)
+    assert (bad.status_code, bad.json()["code"]) == (422, "ONPREM_ACTOR_COUNT_MISMATCH")
     deployed = await console.http.post(path, json=body, headers=headers)
     assert deployed.status_code == 202, deployed.text
     assert (await console.http.post(path, json=body, headers=headers)).json() == deployed.json()
-    engine.run_next()
-    engine.run_next()
     app_path = "/v1/provisioning/environments/" + deployed.json()["environmentId"]
+    if pull_fails:
+        runner.fail_apply = True
+        engine.run_next()
+        assert (await console.http.get(app_path)).json()["status"] == "NEEDS_RECONCILIATION"
+        assert (
+            await console.http.post(app_path + "/reconcile", headers=console.change_headers())
+        ).status_code == 202
+        with patch.object(runner, "remote", return_value={"ownedEmpty": True}) as inspect:
+            engine.run_next()
+        assert inspect.call_args.args[1]["action"] == "inspect"
+        assert (await console.http.get(app_path)).json()["status"] == "RETRYABLE"
+        runner.fail_apply = False
+        assert (
+            await console.http.post(app_path + "/apply", headers=console.change_headers())
+        ).status_code == 202
+    engine.run_next()
+    engine.run_next()
+    if pull_fails:
+        assert runner.calls[-1]["retryOwnedEmpty"]
+    api, worker = runner.calls[-1]["compose"]["services"].values()
+    assert api["environment"]["WORKLOAD_ACTOR"] == "goods-onprem-api"
+    assert worker["environment"]["WORKLOAD_ACTOR"] == "goods-onprem-worker"
+    assert (
+        engine.store.environment(deployed.json()["environmentId"])["tfvars"]["app"]["api_workers"]
+        == 2
+    )
     app = (await console.http.get(app_path)).json()
     assert (app["workflowId"], app["status"]) == (workflow["id"], "READY")
     assert app["handoff"]["preparationEnvironmentId"] == prep_id
     removal = await console.http.post(app_path + "/destroy", headers=console.change_headers())
     assert (removal.status_code, removal.json()["code"]) == (409, "WORKFLOW_BOUND")
+
+
+async def test_overlapping_onprem_inspections_leave_cloud_worker_available(registered_pc):
+    console, engine, _, _ = registered_pc
+
+    async def post(path, body):
+        response = await console.http.post(path, json=body, headers=console.change_headers())
+        assert response.status_code == 202, response.text
+        return response.json()
+
+    prep = (
+        await post("/v1/applications/goods/onprem-preparations", {"nodeId": "pc", "mode": "apply"})
+    )["environmentId"]
+    engine.run_next()
+    deploy = "/v1/applications/goods/deployments"
+    app = (
+        await post(deploy, {"cloud": "onprem", "target": {"nodeId": "pc", "preparationId": prep}})
+    )["environmentId"]
+    engine.run_next()
+    engine.run_next()
+    await post(
+        f"/v1/provisioning/onprem/environments/{prep}/reconcile",
+        {"expectedRevision": engine.onprem.get(prep)["revision"]},
+    )
+    app_job = await post(f"/v1/provisioning/environments/{app}/reconcile", {})
+    engine.config["clouds"]["aws"] = CONFIG["clouds"]["aws"]
+    while engine.run_next():
+        pass
+    assert engine.job(app_job["jobId"])["status"] == "NEEDS_RECONCILIATION"
+    cloud = await post(deploy, {"cloud": "aws"})
+    while engine.run_next():
+        pass
+    assert engine.get(cloud["environmentId"])["status"] == "READY"
+    assert engine.onprem.get(prep)["status"] == "INFRA_READY"
 
 
 @pytest.mark.parametrize("owner_id", ["github:7", None])

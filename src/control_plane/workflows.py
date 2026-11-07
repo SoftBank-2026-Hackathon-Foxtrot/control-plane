@@ -15,6 +15,7 @@ from control_plane.domain.models import (
     Halt,
     ResourceKind,
     RollbackRequest,
+    StageKind,
     StageState,
     Workflow,
     WorkflowEvent,
@@ -88,7 +89,11 @@ class WorkflowService:
             created_at=self.clock.now(),
         )
         plans = []
+        onprem = "onprem" in (source_env, target_env)
         for kind in (ResourceKind.DATABASE, ResourceKind.REDIS):
+            if onprem and kind not in resources:
+                # Global endpoint defaults describe a fixed cloud pair, not this workflow.
+                continue
             plan = await self.bindings.plan(workflow, kind, resources.get(kind))
             if plan is not None:
                 plans.append(plan)
@@ -102,7 +107,10 @@ class WorkflowService:
                 [error.workflow_id],
             ) from error
         for index, definition in enumerate(PLAN):
-            await self.repo.save_stage(workflow.id, StageState(index=index, kind=definition.kind))
+            stage = StageState(index=index, kind=definition.kind)
+            if onprem and resources and definition.kind is StageKind.PREPARE:
+                stage.data["explicitEndpointKinds"] = sorted(kind.value for kind in resources)
+            await self.repo.save_stage(workflow.id, stage)
         for plan in plans:
             await self.repo.save_resource(workflow.id, plan)
         await self._event(workflow, "WORKFLOW_CREATED", actor, f"{source_env} to {target_env}")
