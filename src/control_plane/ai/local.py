@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from control_plane.adapters.client import AdapterClient
+from control_plane.ai.api import router as ai_router
 from control_plane.api.dependencies import CurrentSession
 from control_plane.auth import AuthService
 from control_plane.clock import SystemClock
@@ -65,8 +66,10 @@ def create_app() -> FastAPI:
     app.router.routes[:] = [
         route
         for route in app.routes
-        if getattr(route, "path", "").startswith(("/v1/ai/", "/docs", "/openapi.json", "/health"))
+        if getattr(route, "path", "").startswith(("/docs", "/openapi.json", "/health"))
     ]
+    # Re-add only the AI router after removing the platform's included routers.
+    app.include_router(ai_router)
     assets = Path(__file__).with_name("playground")
 
     @app.get("/", include_in_schema=False)
