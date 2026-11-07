@@ -236,7 +236,7 @@ class Timings(Model):
     business_probe_max_age: float = 30
     light_probe_rate_per_second: float = 5
     light_bucket_seconds: float = 1
-    observation_window: float = 4
+    observation_window: float = 3
     min_light_samples: int = 3
     p95_factor: float = 1.5
     p95_margin_ms: float = 50
@@ -262,7 +262,7 @@ class Seed(Model):
     adapters: Adapters = Field(default_factory=Adapters)
     probe: ProbeSeed
     canary_weights: list[int] = Field(default_factory=lambda: [5])
-    traffic_weights: list[int] = Field(default_factory=lambda: [25, 50, 100])
+    traffic_weights: list[int] = Field(default_factory=lambda: [50, 100])
     timings: Timings = Field(default_factory=Timings)
 
     @model_validator(mode="after")

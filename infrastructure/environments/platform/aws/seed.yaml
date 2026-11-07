@@ -67,4 +67,4 @@ probe:
   cleanupPath: null
 
 canaryWeights: [5]
-trafficWeights: [25, 50, 100]
+trafficWeights: [50, 100]

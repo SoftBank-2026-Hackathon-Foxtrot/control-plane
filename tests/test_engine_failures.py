@@ -242,13 +242,13 @@ async def test_a_failed_step_later_returns_only_to_the_step_before(world: World)
     workflow = await world.start()
     await world.at_stage(workflow.id, TRAFFIC_STAGE)
     await world.tick()
-    assert world.traffic.current == 25
+    assert world.traffic.current == 50
     for _ in range(int(world.seed.timings.observation_window) + 1):
         await world.tick()
-    assert world.traffic.current == 50
+    assert world.traffic.current == 100
     world.prober.light_ok["gcp"] = False
     await world.until(workflow.id, WorkflowStatus.HALTED)
-    assert world.traffic.current == 25
+    assert world.traffic.current == 50
     stages = await world.repo.stages(workflow.id)
     assert stages[TRAFFIC_STAGE].kind is StageKind.TRAFFIC
 
