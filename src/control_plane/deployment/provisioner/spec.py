@@ -124,12 +124,25 @@ def parse(request: dict, catalog: dict, config: dict) -> dict:
 def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) -> dict:
     """Terraform inputs for this request. Raises RequestError on anything not allowed."""
     if req["cloud"] == "onprem":
+        from .node_config import registered
+
         node_id = req["target"].get("nodeId")
         require(
-            set(req["target"]) == {"nodeId"}
+            not (set(req["target"]) - {"nodeId", "preparationId"})
             and type(node_id) is str
             and node_id in config["clouds"]["onprem"]["nodes"],
             "target.nodeId must name a registered on-prem node",
+        )
+        node = registered(config["clouds"]["onprem"]["nodes"], node_id, req["org"]["id"])
+        prep_id = req["target"].get("preparationId")
+        require(
+            prep_id is None
+            or (type(prep_id) is str and re.fullmatch(r"env-[a-f0-9]{12}", prep_id)),
+            "invalid target.preparationId",
+        )
+        require(
+            not node.get("preparation") or prep_id is not None,
+            "prepare this node before deploying the app",
         )
         template = catalog["templates"][req["template"]]
         app = copy.deepcopy(template.get("app", {}))
@@ -142,7 +155,18 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
         )
         for field in ("worker_count", "api_workers"):
             count = app.get(field, 2 if field == "worker_count" else 4)
-            require(type(count) is int and 1 <= count <= 8, f"invalid {field}")
+            require(
+                type(count) is int and (0 if field == "worker_count" else 1) <= count <= 8,
+                f"invalid {field}",
+            )
+        app.setdefault("port", 80)
+        app.setdefault("cpu", 1)
+        app.setdefault("memory_mib", 512)
+        require(type(app["cpu"]) in (int, float) and 0.1 <= app["cpu"] <= 8, "invalid app.cpu")
+        require(
+            type(app["memory_mib"]) is int and 128 <= app["memory_mib"] <= 32768,
+            "invalid app.memoryMiB",
+        )
         require(
             type(app.get("health_path", "/readyz")) is str
             and re.fullmatch(r"/[A-Za-z0-9/_-]*", app.get("health_path", "/readyz")),
@@ -167,9 +191,9 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
                 ),
                 f"{field} must contain valid single-line environment variables",
             )
-        node = config["clouds"]["onprem"]["nodes"][node_id]
         require(
             type(app["image"]) is str
+            and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:/@-]{0,511}", app["image"])
             and any(app["image"].startswith(prefix) for prefix in node["imagePrefixes"]),
             "image is not allowed on this node",
         )
@@ -177,12 +201,30 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
             not req["sizing"] and not req["access"],
             "on-prem capacity and access are configured on the registered node",
         )
-        from control_plane.deployment.runtime import entrypoint
+        from control_plane.deployment.runtime import onprem_entrypoint
 
-        app["entrypoint"] = entrypoint(app.get("port", 80), app.get("api_workers", 4))
+        registered_keys = set().union(
+            *(
+                node.get(field, {})
+                for field in (
+                    "environment",
+                    "secretEnv",
+                    "secretFiles",
+                    "apiEnvironment",
+                    "workerEnvironment",
+                )
+            )
+        )
+        app["env"] = {
+            **{k: v for k, v in config.get("appEnv", {}).items() if k not in registered_keys},
+            **app.get("env", {}),
+        }
+        app["entrypoint"] = onprem_entrypoint(app.get("port", 80), app.get("api_workers", 4))
         return {
             "deployment_id": deployment_id(req["org"]["id"], "node", suffix),
             "node_id": node_id,
+            "org_id": req["org"]["id"],
+            "preparation_id": prep_id,
             "app": app,
             "sizing": {},
         }

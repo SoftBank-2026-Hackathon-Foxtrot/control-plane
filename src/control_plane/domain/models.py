@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
+from pydantic.json_schema import SkipJsonSchema
 
 
 class Model(BaseModel):
@@ -117,6 +118,7 @@ class Workflow(Model):
     """Moves each time a person asks to go on, roll back or abort. Failures of an earlier epoch
     have been reviewed and may be retried, and time spent waiting for that person does not count."""
     created_by: str
+    created_by_id: SkipJsonSchema[str | None] = Field(default=None, exclude=True)
     created_at: datetime
     finished_at: datetime | None = None
     halt: Halt | None = None

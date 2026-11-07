@@ -182,6 +182,7 @@ async def create_workflow(
             source_env=body.source_env,
             target_env=body.target_env,
             actor=session.user.login,
+            actor_id=session.user.id if body.target_env == "onprem" else None,
             resources=body.resources,
         )
         return await _detail(context, created)

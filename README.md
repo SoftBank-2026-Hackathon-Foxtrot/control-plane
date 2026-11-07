@@ -9,6 +9,7 @@ Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)
 - 설계: [플랫폼 백엔드 설계 초안](https://app.notion.com/p/40f8bee9ada48174b929d433081f41b6)
 - 공통 API: [마이그레이션 공통 Design Doc](https://app.notion.com/p/40d8bee9ada4815e9e94ee454be82d4a). `tests/contract/common-api.json`은 `db-migration-adaptor@1eac972`의 계약 사본입니다.
 - 앱이 구현할 내용: [docs/app-integration.md](docs/app-integration.md)
+- 온프렘 PC 등록과 앱 배포: [docs/onprem-platform-deployment.md](docs/onprem-platform-deployment.md)
 - DB 에이전트 연결: [docs/native-db-agent.md](docs/native-db-agent.md). 기본은 PostgreSQL 직접 논리 복제입니다. DMS 작업과 Promote를 사용하지 않습니다.
 - 콘솔의 Proxy·Worker 상태와 복제량: [모듈 관측값 전달](docs/module-observations.md).
 
@@ -62,7 +63,7 @@ make run
 
 ### 앱별 고정 프록시 연결
 
-이 저장소는 시드에 등록한 **앱 하나**를 관리합니다. 앱 생성과 배포는 구현하지 않습니다. DB·Redis의 API와 실행기는 각 앱의 고정 프록시 실행기에 함께 있으며, 시드의 `adapters` 또는 `resources.database.adapter`·`resources.redis.adapter`에서 주소와 인증 참조를 선택합니다. 워커 풀과 임시 프록시 전환은 사용하지 않습니다.
+마이그레이션 엔진은 시드에 등록한 **앱 하나**를 관리합니다. `GET /v1/applications`로 해당 앱을 조회하고 하위 deployment API로 배포합니다. 클라이언트가 앱을 추가 등록하는 API는 없습니다. 마이그레이션용 시드와 어댑터 등록은 별도로 맞춥니다. DB·Redis의 API와 실행기는 각 앱의 고정 프록시 실행기에 함께 있으며, 시드의 `adapters` 또는 `resources.database.adapter`·`resources.redis.adapter`에서 주소와 인증 참조를 선택합니다. 워커 풀과 임시 프록시 전환은 사용하지 않습니다.
 
 앱 기동 전에 `POST /v1/applications/{application}/bindings`에 `{}`를 보내면 시드의 source로 DB·Redis 바인딩을 등록합니다. 직접 입력할 때는 `{"sources":{"DATABASE":{...},"REDIS":{...}}}`를 보냅니다. 바인딩이 준비될 때까지 `GET /v1/applications/{application}/bindings`로 확인합니다. DB 등록은 비동기이므로 첫 응답이 준비 완료를 뜻하지 않습니다. 응답의 `proxy`에는 고정 host·port·database·protocol이 있습니다. 앱 배포기는 이 주소와 앱용 인증 정보를 앱 설정에 넣어야 합니다. 인증 정보의 실제 값은 이 API가 반환하지 않습니다.
 

@@ -1,0 +1,20 @@
+import os
+import sys
+from urllib.parse import quote
+
+# Secret values arrive through runtime secret references, never command arguments.
+for key, value in list(os.environ.items()):
+    if "__APP_DB_PASSWORD__" in value:
+        value = value.replace("__APP_DB_PASSWORD__", quote(os.environ["APP_DB_PASSWORD"], safe=""))
+    if "__STORAGE_SECRET__" in value:
+        value = value.replace("__STORAGE_SECRET__", os.environ["APP_STORAGE_SECRET"])
+    os.environ[key] = value
+
+# The prepared node owns DB roles; app tables remain the user application's responsibility.
+if sys.argv[1] == "api":
+    command = ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "${port}", "--workers", "${api_workers}"]
+else:
+    command = ["python", "-m", "app.worker", "--name", sys.argv[1]]
+    if sys.argv[1] == "w1":
+        command.append("--reconciler")
+os.execvp(command[0], command)

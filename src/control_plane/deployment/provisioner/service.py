@@ -91,6 +91,19 @@ class Service:
             )
         suffix = secrets.token_hex(2)
         tfvars = spec.render(req, self.catalog, self.config, suffix, self.today())
+        if req["cloud"] == "onprem":
+            for other in self.store.environments():
+                if (
+                    other["cloud"] == "onprem"
+                    and other["status"] != "DESTROYED"
+                    and other["tfvars"].get("node_id") == tfvars["node_id"]
+                ):
+                    raise Conflict(
+                        "NODE_RESERVED",
+                        "remove the existing app deployment before reusing this node",
+                    )
+            # Check registration, ownership and preparation before queueing remote work.
+            self.tf.resolve(tfvars)
         env_id = f"env-{uuid.uuid4().hex[:12]}"
         stamp = now()
         self.store.insert_environment(
@@ -211,6 +224,28 @@ class Service:
             "environmentId": env_id,
             "jobId": self._enqueue(env_id, "CHECK_APP"),
             "status": "VERIFYING_APP",
+        }
+
+    @admission
+    def reconcile(self, env_id: str) -> tuple[int, dict]:
+        env = self._get(env_id)
+        if env["cloud"] != "onprem" or env["status"] not in (
+            "NEEDS_RECONCILIATION",
+            "FAILED",
+            "APP_NOT_READY",
+            "INFRA_READY",
+            "READY",
+        ):
+            raise Conflict(
+                "INVALID_STATE",
+                "on-prem reconciliation needs a completed or interrupted deployment",
+            )
+        self._not_busy(env_id)
+        self.store.update_environment(env_id, now(), status="RECONCILING")
+        return 202, {
+            "environmentId": env_id,
+            "jobId": self._enqueue(env_id, "RECONCILE"),
+            "status": "RECONCILING",
         }
 
     def bind_workflow(self, env_id: str, body: dict) -> tuple[int, dict]:
@@ -382,8 +417,19 @@ class Service:
                     plan=plan,
                     status="PLANNED" if job["kind"] == "PLAN" else "APPLYING",
                 )
-            if job["kind"] in ("APPLY", "PLAN_APPLY"):
-                handoff = self.tf.apply(env_id, cloud, "reviewed.tfplan")
+            if job["kind"] in ("APPLY", "PLAN_APPLY", "RECONCILE"):
+                handoff = (
+                    self.tf.reconcile(env_id, cloud, env["tfvars"])
+                    if job["kind"] == "RECONCILE"
+                    else self.tf.apply(env_id, cloud, "reviewed.tfplan")
+                )
+                if job["kind"] == "RECONCILE" and handoff is None:
+                    self.store.update_environment(
+                        env_id, now(), status="DESTROYED", handoff=None, error=None, readiness=None
+                    )
+                    self.store.update_job(job["id"], status="SUCCEEDED", finished_at=now())
+                    self._publish(env_id, job["id"])
+                    return
                 self.store.update_environment(
                     env_id,
                     now(),
@@ -399,7 +445,7 @@ class Service:
                         "application": {"status": "PENDING", "observedAt": None},
                     },
                 )
-            if job["kind"] in ("APPLY", "PLAN_APPLY", "CHECK_APP"):
+            if job["kind"] in ("APPLY", "PLAN_APPLY", "RECONCILE", "CHECK_APP"):
                 # A separate job keeps apply evidence if this process stops while probing.
                 if job["kind"] != "CHECK_APP":
                     self._enqueue(env_id, "CHECK_APP")
@@ -452,6 +498,19 @@ class Service:
                 return
             message = str(exc)[-2000:]
             self.store.update_job(job["id"], status="FAILED", error=message, finished_at=now())
+            if cloud == "onprem" and job["kind"] == "CHECK_APP":
+                current = self._get(env_id)
+                readiness = current.get("readiness") or self.view(current)["readiness"]
+                readiness["application"] = {
+                    "status": "UNKNOWN",
+                    "reason": message,
+                    "observedAt": now(),
+                }
+                self.store.update_environment(
+                    env_id, now(), status="INFRA_READY", readiness=readiness
+                )
+                self._publish(env_id, job["id"])
+                return
             self.store.update_environment(env_id, now(), status="FAILED", error=message)
             self._publish(env_id, job["id"])
             return

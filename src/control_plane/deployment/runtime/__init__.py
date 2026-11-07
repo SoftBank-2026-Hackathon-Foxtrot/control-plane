@@ -12,3 +12,10 @@ def entrypoint(port: int, api_workers: int) -> list[str]:
     )
     startup = startup.replace("${port}", str(port)).replace("${api_workers}", str(api_workers))
     return ["python", "-c", startup]
+
+
+def onprem_entrypoint(port: int, api_workers: int) -> list[str]:
+    """Use prepared roles and the configured proxy without managed-cloud DB bootstrap."""
+    startup = (Path(__file__).parent / "onprem_start.py.tmpl").read_text()
+    startup = startup.replace("${port}", str(port)).replace("${api_workers}", str(api_workers))
+    return ["python", "-c", startup]

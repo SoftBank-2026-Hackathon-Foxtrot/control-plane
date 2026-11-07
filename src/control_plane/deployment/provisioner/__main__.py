@@ -50,11 +50,10 @@ def build(config: dict, catalog: dict) -> Service:
         state=config.get("stateBackend"),
     )
     from .node import DeploymentExecutor
+    from .node_registration import configure
     from .readiness import AppChecker
 
-    executor = DeploymentExecutor(
-        terraform, config.get("clouds", {}).get("onprem", {}).get("nodes", {})
-    )
+    executor = DeploymentExecutor(terraform, {})
     service = Service(
         Store(work / "provisioner.db"),
         executor,
@@ -63,24 +62,7 @@ def build(config: dict, catalog: dict) -> Service:
         checker=AppChecker(config.get("readiness"), node_checker=executor.check),
     )
 
-    if config.get("onprem"):
-        from .drivers.ansible import AnsibleDriver
-        from .inventory import Inventory
-        from .onprem import OnPremService
-        from .onprem_store import OnPremStore
-
-        settings = config["onprem"]
-        inventory = Inventory(
-            settings["catalogFile"],
-            settings["secretRoot"],
-            allow_local=settings.get("allowLocal", False),
-        )
-        service.onprem = OnPremService(
-            OnPremStore(work / "provisioner.db"),
-            inventory,
-            AnsibleDriver(HERE.parent, work / "ansible", inventory),
-            service.checker,
-        )
+    configure(service, executor, config, work, HERE.parent)
     return service
 
 
