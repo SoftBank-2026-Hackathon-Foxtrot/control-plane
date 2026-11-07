@@ -50,7 +50,7 @@ class Terraform:
         return self.work_root / env_id / "terraform.log"
 
     def prepare(self, env_id: str, cloud: str, tfvars: dict) -> Path:
-        """Copy the code (state and plans in the workspace are kept) and write this environment's inputs."""
+        """Copy code and write inputs, preserving workspace state and plans."""
         base = self.work_root / env_id
         shutil.copytree(
             self.repo_root / "environments" / cloud,

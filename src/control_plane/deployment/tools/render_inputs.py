@@ -351,7 +351,8 @@ def main():
         if args.command == "validate":
             validate_config(args.cloud, base)
             print(
-                "Input checks passed. Run terraform validate/plan and review live capacity separately."
+                "Input checks passed. Run terraform validate/plan and review "
+                "live capacity separately."
             )
         elif args.command == "context":
             validate_config(args.cloud, base)

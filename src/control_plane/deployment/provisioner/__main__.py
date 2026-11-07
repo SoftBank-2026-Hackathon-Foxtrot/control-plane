@@ -64,18 +64,20 @@ def build(config: dict, catalog: dict) -> Service:
     )
 
     if config.get("onprem"):
+        from .drivers.ansible import AnsibleDriver
         from .inventory import Inventory
         from .onprem import OnPremService
         from .onprem_store import OnPremStore
-        from .drivers.ansible import AnsibleDriver
 
         settings = config["onprem"]
         inventory = Inventory(
-            settings["catalogFile"], settings["secretRoot"],
+            settings["catalogFile"],
+            settings["secretRoot"],
             allow_local=settings.get("allowLocal", False),
         )
         service.onprem = OnPremService(
-            OnPremStore(work / "provisioner.db"), inventory,
+            OnPremStore(work / "provisioner.db"),
+            inventory,
             AnsibleDriver(HERE.parent, work / "ansible", inventory),
             service.checker,
         )
@@ -150,7 +152,9 @@ def main() -> None:
         if args.command == "onprem-up":
             if service.onprem is None:
                 raise RequestError("onprem configuration required")
-            _, created = service.onprem.create(json.loads(Path(args.request).read_text()), args.idempotency_key)
+            _, created = service.onprem.create(
+                json.loads(Path(args.request).read_text()), args.idempotency_key
+            )
             while service.run_next():
                 pass
             result = service.onprem.get(created["environmentId"])

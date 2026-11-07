@@ -1,0 +1,11 @@
+{
+  "workflowId": "mig_to_gcp",
+  "resourceId": "demo-web",
+  "kind": "COMPUTE",
+  "profile": "container-stage-v1",
+  "sourceRef": "resource:aws-demo-web",
+  "targetRef": "resource:gcp-demo-web",
+  "workloadScopeRef": "workload:demo-web",
+  "bindingRef": "binding:demo-web-entry",
+  "policy": {"rollbackMode": "BEFORE_TARGET_WRITE", "maxQuiesceSeconds": 30}
+}

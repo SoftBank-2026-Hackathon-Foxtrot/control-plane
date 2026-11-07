@@ -1,10 +1,11 @@
 """Read/claim/inspect a reserved runtime directory. Preserve unrelated workloads."""
+
 import argparse
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 
 def docker(*args):
@@ -44,9 +45,16 @@ def run(args):
     all_records = containers()
     for container in all_records:
         labels = container["Config"].get("Labels", {})
-        if labels.get("com.docker.compose.project") == args.environment and labels.get("foxtrot.environment") != args.environment:
+        if (
+            labels.get("com.docker.compose.project") == args.environment
+            and labels.get("foxtrot.environment") != args.environment
+        ):
             raise RuntimeError("Compose project contains an unowned workload")
-    records = [c for c in all_records if c["Config"].get("Labels", {}).get("foxtrot.environment") == args.environment]
+    records = [
+        c
+        for c in all_records
+        if c["Config"].get("Labels", {}).get("foxtrot.environment") == args.environment
+    ]
     env_root = root / args.environment
     if args.action == "preflight":
         if saved is None and env_root.exists():
@@ -66,34 +74,73 @@ def run(args):
         if saved.get("released"):
             return {"ready": False, "released": not records, "configurationMatches": True}
         config = json.loads((env_root / "host.json").read_text())
-        actual = {c["Config"].get("Labels", {}).get("com.docker.compose.service"): c for c in records}
+        actual = {
+            c["Config"].get("Labels", {}).get("com.docker.compose.service"): c for c in records
+        }
         healthy = set(actual) == set(config["services"]) and all(
-            c["State"].get("Running") is True and c["State"].get("Health", {}).get("Status") == "healthy"
-            and c["Config"]["Image"] == config["images"][name] for name, c in actual.items())
+            c["State"].get("Running") is True
+            and c["State"].get("Health", {}).get("Status") == "healthy"
+            and c["Config"]["Image"] == config["images"][name]
+            for name, c in actual.items()
+        )
         if len(records) != len(actual):
             healthy = False
         if "postgres" in actual and healthy:
             # App tables are intentionally not inspected/created by infrastructure preparation.
             db = actual["postgres"]["Id"]
-            version = docker("exec", db, "psql", "-U", "postgres", "-At", "-c", "SHOW server_version_num")
+            version = docker(
+                "exec", db, "psql", "-U", "postgres", "-At", "-c", "SHOW server_version_num"
+            )
             healthy = 170000 <= int(version) < 180000
-            logical = docker("exec", db, "psql", "-U", "postgres", "-At", "-c",
-                             "SELECT current_setting('wal_level') = 'logical' AND "
-                             "current_setting('max_replication_slots')::int > 0 AND "
-                             "current_setting('max_wal_senders')::int > 0")
+            logical = docker(
+                "exec",
+                db,
+                "psql",
+                "-U",
+                "postgres",
+                "-At",
+                "-c",
+                "SELECT current_setting('wal_level') = 'logical' AND "
+                "current_setting('max_replication_slots')::int > 0 AND "
+                "current_setting('max_wal_senders')::int > 0",
+            )
             healthy = healthy and logical == "t"
-            roles = docker("exec", db, "psql", "-U", "postgres", "-At", "-c",
-                           "SELECT count(*) FROM pg_roles WHERE rolname IN ('app_schema','app_writer') "
-                           "AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication")
+            roles = docker(
+                "exec",
+                db,
+                "psql",
+                "-U",
+                "postgres",
+                "-At",
+                "-c",
+                "SELECT count(*) FROM pg_roles WHERE rolname IN ('app_schema','app_writer') "
+                "AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication",
+            )
             healthy = healthy and roles == "2"
         if "valkey" in actual and healthy:
             # Verify persistent config through the authenticated admin connection.
-            result = docker("exec", actual["valkey"]["Id"], "sh", "-c",
-                            'REDISCLI_AUTH=$(cat /run/foxtrot/valkey_admin) valkey-cli --raw CONFIG GET appendonly aclfile maxmemory-policy')
-            healthy = all(value in result.splitlines() for value in ("yes", "/data/users.acl", "noeviction"))
+            result = docker(
+                "exec",
+                actual["valkey"]["Id"],
+                "sh",
+                "-c",
+                (
+                    "REDISCLI_AUTH=$(cat /run/foxtrot/valkey_admin) valkey-cli --raw C"
+                    "ONFIG GET appendonly aclfile maxmemory-policy"
+                ),
+            )
+            healthy = all(
+                value in result.splitlines() for value in ("yes", "/data/users.acl", "noeviction")
+            )
         if "seaweedfs" in actual and healthy:
-            healthy = subprocess.run([sys.executable, str(env_root / "scripts/bucket.py"), "--check"],
-                                     capture_output=True, timeout=15).returncode == 0
+            healthy = (
+                subprocess.run(
+                    [sys.executable, str(env_root / "scripts/bucket.py"), "--check"],
+                    capture_output=True,
+                    timeout=15,
+                ).returncode
+                == 0
+            )
         return {"ready": healthy, "released": False, "configurationMatches": True}
     raise RuntimeError("Unknown operation")
 

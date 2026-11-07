@@ -18,6 +18,7 @@ import re
 import secrets
 import threading
 import uuid
+from contextlib import suppress
 from functools import wraps
 
 from opentelemetry.trace import Status, StatusCode
@@ -25,9 +26,9 @@ from opentelemetry.trace import Status, StatusCode
 from control_plane.deployment.tools.telemetry import get_telemetry
 
 from . import spec
+from .drivers.terraform import TerraformDriver
 from .readiness import AppChecker
 from .store import Store
-from .drivers.terraform import TerraformDriver
 from .terraform import Terraform, TerraformError
 
 
@@ -336,10 +337,8 @@ class Service:
     def run_forever(self, stop: threading.Event) -> None:
         def observe():
             while not stop.is_set():
-                try:
+                with suppress(Exception):
                     self.publish_observations()
-                except Exception:
-                    pass  # An observation outage cannot stop a provisioning job.
                 stop.wait(5)
 
         observer = threading.Thread(target=observe, name="otel-provisioner", daemon=True)
@@ -401,7 +400,7 @@ class Service:
                     },
                 )
             if job["kind"] in ("APPLY", "PLAN_APPLY", "CHECK_APP"):
-                # A separate job keeps successful apply evidence even if this process stops while probing.
+                # A separate job keeps apply evidence if this process stops while probing.
                 if job["kind"] != "CHECK_APP":
                     self._enqueue(env_id, "CHECK_APP")
                 else:

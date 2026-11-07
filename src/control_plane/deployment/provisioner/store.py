@@ -45,7 +45,8 @@ class Store:
     def insert_environment(self, env: dict) -> None:
         with self.lock:
             self.db.execute(
-                "INSERT INTO environments (id,org_id,cloud,template,deployment_id,status,request,tfvars,"
+                "INSERT INTO environments (id,org_id,cloud,template,deploymen"
+                "t_id,status,request,tfvars,"
                 "plan,handoff,error,created_at,updated_at,readiness) VALUES "
                 "(:id,:org_id,:cloud,:template,:deployment_id,:status,:request,:tfvars,"
                 ":plan,:handoff,:error,:created_at,:updated_at,:readiness)",
@@ -87,7 +88,8 @@ class Store:
         with self.lock:
             return self._env(
                 self.db.execute(
-                    "SELECT * FROM environments WHERE org_id=? AND cloud=? AND template=? AND status NOT IN ('DESTROYED','FAILED')",
+                    "SELECT * FROM environments WHERE org_id=? AND cloud=? AND te"
+                    "mplate=? AND status NOT IN ('DESTROYED','FAILED')",
                     (org_id, cloud, template),
                 ).fetchone()
             )
@@ -95,7 +97,8 @@ class Store:
     def insert_job(self, job: dict) -> None:
         with self.lock:
             self.db.execute(
-                "INSERT INTO jobs VALUES (:id,:environment_id,:kind,:status,NULL,:created_at,NULL,NULL)",
+                "INSERT INTO jobs VALUES (:id,:environment_id,:kind,:status,N"
+                "ULL,:created_at,NULL,NULL)",
                 job,
             )
 

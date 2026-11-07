@@ -4,6 +4,7 @@ Probe the registered target's private VM address or dedicated managed-service en
 Only the configured readiness endpoint's HTTP 200 is evidence; redirects never count.
 """
 
+import ipaddress
 import time
 from datetime import UTC, datetime
 from http.client import HTTPException
@@ -32,13 +33,22 @@ class AppChecker:
 
     def check_onprem(self, handoff, binding):
         if not binding:
-            return {"status": "NOT_CONFIGURED", "observedAt": now(), "reason": "No app binding configured"}
+            return {
+                "status": "NOT_CONFIGURED",
+                "observedAt": now(),
+                "reason": "No app binding configured",
+            }
         result = self.check(
             {"compute": {"private_ip": handoff["compute"]["privateAddress"]}},
             {"port": binding["port"], "health_path": binding["healthPath"]},
             expected_identity=binding["expectedServedBy"],
-            allow_loopback=handoff.get("network", {}).get("scope") == "LOCAL_ONLY")
-        result["probeScope"] = "LOCAL_ONLY" if handoff.get("network", {}).get("scope") == "LOCAL_ONLY" else "MANAGEMENT_TO_TARGET"
+            allow_loopback=handoff.get("network", {}).get("scope") == "LOCAL_ONLY",
+        )
+        result["probeScope"] = (
+            "LOCAL_ONLY"
+            if handoff.get("network", {}).get("scope") == "LOCAL_ONLY"
+            else "MANAGEMENT_TO_TARGET"
+        )
         result["hostId"] = binding["hostId"]
         return result
 
@@ -128,8 +138,14 @@ class AppChecker:
                     result["httpStatus"] = response.status
                     result["status"] = "READY" if response.status == 200 else "NOT_READY"
                     result["reason"] = None if response.status == 200 else "Unexpected HTTP status"
-                    if expected_identity is not None and response.getheader("X-Served-By") != expected_identity:
-                        result.update(status="NOT_READY", reason="Target app identity did not match the registered binding")
+                    if (
+                        expected_identity is not None
+                        and response.getheader("X-Served-By") != expected_identity
+                    ):
+                        result.update(
+                            status="NOT_READY",
+                            reason="Target app identity did not match the registered binding",
+                        )
             except HTTPError as exc:
                 result.update(httpStatus=exc.code, reason="Unexpected HTTP status")
                 exc.close()

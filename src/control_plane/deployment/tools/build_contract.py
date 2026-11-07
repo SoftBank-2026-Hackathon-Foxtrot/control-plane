@@ -50,7 +50,8 @@ def make_artifacts():
     for cloud, rules in policy["clouds"].items():
         schemas[f"{cloud.title()}Sizing"] = obj(copy.deepcopy(rules), required=[])
     schemas["Sizing"] = {
-        "description": "Partial sizing only. Server validates the TARGET cloud and merged baseline. Omitted fields retain managed values.",
+        "description": "Partial sizing only. Server validates the TARGET cloud and m"
+        "erged baseline. Omitted fields retain managed values.",
         # Common fields and {} match both clouds; oneOf would reject them.
         "anyOf": [ref("AwsSizing"), ref("GcpSizing")],
     }
@@ -63,7 +64,8 @@ def make_artifacts():
             "target_sizing": ref("Sizing"),
             "sizing_schema": {
                 "type": "object",
-                "description": "Standalone JSON Schema for the target's editable fields, from the reviewed catalog.",
+                "description": "Standalone JSON Schema for the target's editable fields, fro"
+                "m the reviewed catalog.",
             },
         }
     )
@@ -73,7 +75,8 @@ def make_artifacts():
             "address": string(),
             "action": string(enum=["CREATE", "UPDATE", "DELETE", "REPLACE", "NO_OP"]),
             "summary": string(
-                description="Redacted change and interruption implications; never raw provider data."
+                description="Redacted change and interruption implications; never raw pro"
+                "vider data."
             ),
         }
     )
@@ -98,7 +101,9 @@ def make_artifacts():
             "outputs": {
                 "type": "object",
                 "additionalProperties": False,
-                "description": "Only terraform output -json handoff (schema_version 1). Native fields: docs/platform-contract.md and root outputs.tf. Never full state, plan or credentials.",
+                "description": "Only terraform output -json handoff (schema_version 1). Nati"
+                "ve fields: docs/platform-contract.md and root outputs.tf. Ne"
+                "ver full state, plan or credentials.",
                 "required": [
                     "schema_version",
                     "cloud",
@@ -159,7 +164,9 @@ def make_artifacts():
         "in": "header",
         "required": True,
         "schema": string(minLength=8, maxLength=128),
-        "description": "PLAN/APPLY retries with the same key and body return the same job; changed body is 409. A plan executes at most once even with a new key.",
+        "description": "PLAN/APPLY retries with the same key and body return the sam"
+        "e job; changed body is 409. A plan executes at most once eve"
+        "n with a new key.",
     }
 
     def operation(name, summary, output, path_param, request=None, async_job=False):
@@ -221,7 +228,10 @@ def make_artifacts():
         "info": {
             "title": "Foxtrot Managed Provisioning — DRAFT",
             "version": "0.3.0",
-            "description": "Source and target code, baseline, state and credentials are already managed by the platform. Only target sizing can change. Specification only; no API or runner implemented. See docs/provisioning-interface.md.",
+            "description": "Source and target code, baseline, state and credentials are "
+            "already managed by the platform. Only target sizing can chan"
+            "ge. Specification only; no API or runner implemented. See do"
+            "cs/provisioning-interface.md.",
         },
         "servers": [{"url": "/api/v1/provisioning"}],
         "security": [{"platformBearer": []}],
@@ -231,13 +241,16 @@ def make_artifacts():
                 "platformBearer": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "Reuse platform auth; authorize migration/plan/job references and target execution on every request.",
+                    "description": "Reuse platform auth; authorize migration/plan/job references"
+                    " and target execution on every request.",
                 }
             },
             "parameters": params,
             "responses": {
                 "Error": {
-                    "description": "400 malformed; 401 unauthenticated; 403 forbidden; 404 unknown reference; 409 stale/blocked/busy/idempotency conflict; 422 invalid sizing; 429 limited; 500/503 unavailable.",
+                    "description": "400 malformed; 401 unauthenticated; 403 forbidden; 404 unkno"
+                    "wn reference; 409 stale/blocked/busy/idempotency conflict; 4"
+                    "22 invalid sizing; 429 limited; 500/503 unavailable.",
                     "content": {"application/json": {"schema": ref("Error")}},
                 }
             },
@@ -421,7 +434,8 @@ def main():
             "Stale generated contracts; run python tools/build_contract.py:\n" + "\n".join(stale)
         )
     print(
-        f"{'Checked' if args.check else 'Wrote'} {len(artifacts)} contract artifacts (specification only)."
+        f"{'Checked' if args.check else 'Wrote'} {len(artifacts)} "
+        "contract artifacts (specification only)."
     )
 
 

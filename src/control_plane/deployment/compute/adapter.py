@@ -37,7 +37,8 @@ def registration(handoff, binding):
     outputs = handoff["outputs"]
     if outputs.get("compute", {}).get("runtime", "ON_PREM") != "ON_PREM":
         raise ValueError(
-            "Managed services are deployed and checked through the provisioner; the local Docker COMPUTE adapter requires an on-prem node"
+            "Managed services are deployed and checked through the provisioner"
+            "; the local Docker COMPUTE adapter requires an on-prem node"
         )
     target = handoff["target"]
     if (
@@ -129,8 +130,10 @@ class Adapter:
         with self.transaction() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS migrations(id TEXT PRIMARY KEY, plan TEXT, target TEXT,
-                    stage TEXT, health TEXT, revision INTEGER, active TEXT, updated TEXT, result TEXT);
-                CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, migration TEXT, action TEXT,
+                    stage TEXT, health TEXT, revision INTEGER, active TEXT,
+                    updated TEXT, result TEXT);
+                CREATE TABLE IF NOT EXISTS operations(
+                    id TEXT PRIMARY KEY, migration TEXT, action TEXT,
                     step TEXT, status TEXT, error TEXT, result TEXT);
                 CREATE TABLE IF NOT EXISTS requests(path TEXT, key TEXT, body TEXT, response TEXT,
                     PRIMARY KEY(path, key));
@@ -143,12 +146,14 @@ class Adapter:
             # Never replay an external Docker command interrupted by a process exit.
             db.execute("BEGIN IMMEDIATE")
             db.execute(
-                """UPDATE migrations SET health='UNKNOWN', active=NULL, updated=?, revision=revision+1
+                """UPDATE migrations SET health='UNKNOWN', active=NULL,
+                    updated=?, revision=revision+1
                           WHERE active IN (SELECT id FROM operations WHERE status='RUNNING')""",
                 (now(),),
             )
             db.execute(
-                "UPDATE operations SET status='UNKNOWN', error='Execution interrupted' WHERE status='RUNNING'"
+                "UPDATE operations SET status='UNKNOWN', error='Execution interrup"
+                "ted' WHERE status='RUNNING'"
             )
 
     @contextmanager
@@ -321,7 +326,10 @@ class Adapter:
                 "SELECT step FROM operations WHERE migration=? ORDER BY rowid DESC LIMIT 1", (item,)
             ).fetchone()["step"]
         db.execute(
-            "INSERT INTO operations (id,migration,action,step,status,requested_at) VALUES (?,?,?,?,'QUEUED',?)",
+            (
+                "INSERT INTO operations (id,migration,action,step,status,requested"
+                "_at) VALUES (?,?,?,?,'QUEUED',?)"
+            ),
             (op, item, action, step, now()),
         )
         db.execute(

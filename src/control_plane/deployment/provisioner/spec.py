@@ -88,12 +88,16 @@ def parse(request: dict, catalog: dict, config: dict) -> dict:
     )
     require(not (org.keys() - {"id", "name"}), "org: only id and name")
     cloud = request.get("cloud")
-    require(type(cloud) is str and cloud in config["clouds"], f"cloud: one of {sorted(config['clouds'])}")
+    require(
+        type(cloud) is str and cloud in config["clouds"],
+        f"cloud: one of {sorted(config['clouds'])}",
+    )
     app = request.get("app") or {}
     require(type(app) is dict, "app must be an object")
     template = app.get("template", "chiikawa-groupbuy")
     require(
-        type(template) is str and template in catalog["templates"], f"app.template: one of {sorted(catalog['templates'])}"
+        type(template) is str and template in catalog["templates"],
+        f"app.template: one of {sorted(catalog['templates'])}",
     )
     require(not (app.keys() - set(APP_FIELDS) - {"template"}), "app: unknown field")
     mode = request.get("mode", "apply")

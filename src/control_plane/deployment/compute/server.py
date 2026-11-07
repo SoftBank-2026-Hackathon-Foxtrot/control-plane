@@ -6,6 +6,7 @@ import json
 import os
 import re
 import threading
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -61,7 +62,9 @@ class Handler(BaseHTTPRequestHandler):
                         raise ValueError()
                     body = json.loads(self.rfile.read(length))
                 except (ValueError, UnicodeError):
-                    raise Problem(400, "INVALID_REQUEST", "Expected a JSON body up to 64 KiB")
+                    raise Problem(
+                        400, "INVALID_REQUEST", ("Expected a JSON body up to 64 KiB")
+                    ) from None
                 return adapter.post(
                     match[1] if match else None, self.headers.get("Idempotency-Key"), body
                 )
@@ -76,10 +79,8 @@ def work(adapter, stopping):
 
 def observe(adapter, stopping):
     while not stopping.is_set():
-        try:
+        with suppress(Exception):
             adapter.publish_observations()
-        except Exception:
-            pass  # Read-only observation never changes command execution.
         stopping.wait(5)
 
 

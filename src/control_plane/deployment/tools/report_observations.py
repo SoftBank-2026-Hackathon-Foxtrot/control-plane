@@ -110,7 +110,8 @@ def provisioner_reports(workflow, environment, job):
     # of scalar checks, so both readiness results fit without replacing adapter operations.
     checks = [
         f"INFRA={infra.get('status', 'UNKNOWN')}; observedAt={infra.get('observedAt')}",
-        f"APP={app.get('status', 'UNKNOWN')}; HTTP={app.get('httpStatus')}; observedAt={app.get('observedAt')}; scope=APP_HTTP_READINESS",
+        f"APP={app.get('status', 'UNKNOWN')}; HTTP={app.get('httpStatus')}; "
+        f"observedAt={app.get('observedAt')}; scope=APP_HTTP_READINESS",
     ]
     return [
         {

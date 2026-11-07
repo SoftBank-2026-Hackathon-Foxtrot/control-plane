@@ -84,7 +84,9 @@ class DeploymentExecutor:
         reserved = set(node.get("environment", {})) | set(node.get("secretEnv", {}))
         for field in ("env", "api_env", "worker_env"):
             if reserved.intersection(spec["app"].get(field, {})):
-                raise TerraformError("application variables cannot override registered node settings")
+                raise TerraformError(
+                    "application variables cannot override registered node settings"
+                )
         base = {**node.get("environment", {}), **spec["app"].get("env", {})}
         for key, reference in node.get("secretEnv", {}).items():
             if not os.environ.get(reference):
@@ -132,9 +134,13 @@ class DeploymentExecutor:
                             f"{node.get('bindAddress', '127.0.0.1')}:{app['port']}:{app['port']}",
                         ]
                         url = f"http://127.0.0.1:{app['port']}{app.get('health_path', '/readyz')}"
-                        health = "import urllib.request as u; u.urlopen(" + repr(url) + ", timeout=2)"
+                        health = (
+                            "import urllib.request as u; u.urlopen(" + repr(url) + ", timeout=2)"
+                        )
                         url = f"http://127.0.0.1:{app['port']}{app.get('health_path', '/readyz')}"
-                        health = "import urllib.request as u; u.urlopen(" + repr(url) + ", timeout=2)"
+                        health = (
+                            "import urllib.request as u; u.urlopen(" + repr(url) + ", timeout=2)"
+                        )
                         command += [
                             "--health-cmd",
                             shlex.join(["python", "-c", health]),

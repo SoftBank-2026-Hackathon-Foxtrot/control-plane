@@ -9,6 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from control_plane.deployment.paths import iac_root
 from control_plane.deployment.provisioner import spec
 from control_plane.deployment.provisioner.server import ProvisionerServer
 from control_plane.deployment.provisioner.service import Conflict, Service
@@ -25,8 +26,6 @@ class ReadyChecker:
             "httpStatus": 200,
         }
 
-
-from control_plane.deployment.paths import iac_root
 
 ROOT = iac_root()
 CATALOG = json.loads((ROOT / "provisioner/catalog.json").read_text())

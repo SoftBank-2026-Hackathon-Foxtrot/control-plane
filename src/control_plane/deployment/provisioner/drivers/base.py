@@ -1,4 +1,5 @@
 """Small execution boundary shared by Terraform and Ansible."""
+
 from typing import Protocol
 
 

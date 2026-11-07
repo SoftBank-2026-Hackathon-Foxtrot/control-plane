@@ -1,4 +1,5 @@
 """An additive journal: v1 cloud rows and wire representations remain untouched."""
+
 import json
 import sqlite3
 import threading
@@ -10,10 +11,13 @@ class OnPremStore:
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         self.lock = threading.RLock()
         self.db.executescript("""
-            CREATE TABLE IF NOT EXISTS onprem_environments(id TEXT PRIMARY KEY, record TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS onprem_environments(
+                id TEXT PRIMARY KEY, record TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS onprem_jobs(id TEXT PRIMARY KEY, record TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS onprem_hosts(host TEXT PRIMARY KEY, environment_id TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS onprem_requests(scope TEXT PRIMARY KEY, digest TEXT NOT NULL, response TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS onprem_hosts(
+                host TEXT PRIMARY KEY, environment_id TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS onprem_requests(
+                scope TEXT PRIMARY KEY, digest TEXT NOT NULL, response TEXT NOT NULL);
         """)
 
     @contextmanager
@@ -34,19 +38,29 @@ class OnPremStore:
 
     def put(self, table, record):
         assert table in ("environments", "jobs")
-        self.db.execute(f"INSERT INTO onprem_{table} VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record",
-                        (record["id"], json.dumps(record)))
+        self.db.execute(
+            f"INSERT INTO onprem_{table} VALUES (?,?) "
+            "ON CONFLICT(id) DO UPDATE SET record=excluded.record",
+            (record["id"], json.dumps(record)),
+        )
 
     def all(self, table):
         assert table in ("environments", "jobs")
-        return [json.loads(row[0]) for row in self.db.execute(f"SELECT record FROM onprem_{table} ORDER BY rowid")]
+        return [
+            json.loads(row[0])
+            for row in self.db.execute(f"SELECT record FROM onprem_{table} ORDER BY rowid")
+        ]
 
     def remembered(self, scope):
-        row = self.db.execute("SELECT digest,response FROM onprem_requests WHERE scope=?", (scope,)).fetchone()
+        row = self.db.execute(
+            "SELECT digest,response FROM onprem_requests WHERE scope=?", (scope,)
+        ).fetchone()
         return (row[0], json.loads(row[1])) if row else None
 
     def remember(self, scope, digest, response):
-        self.db.execute("INSERT INTO onprem_requests VALUES (?,?,?)", (scope, digest, json.dumps(response)))
+        self.db.execute(
+            "INSERT INTO onprem_requests VALUES (?,?,?)", (scope, digest, json.dumps(response))
+        )
 
     def reserve(self, environment_id, hosts):
         for host in hosts:

@@ -23,7 +23,9 @@ from .spec import RequestError
 
 ENV = re.compile(r"^/v1/environments/(env-[a-f0-9]{12})(/apply|/update|/check-app|/workflow)?$")
 JOB = re.compile(r"^/v1/jobs/(job-[a-f0-9]{12})$")
-ENV2 = re.compile(r"^/v2/environments/(env-[a-f0-9]{12})(?:/(plan|apply|check-app|workflow|reconcile))?$")
+ENV2 = re.compile(
+    r"^/v2/environments/(env-[a-f0-9]{12})(?:/(plan|apply|check-app|workflow|reconcile))?$"
+)
 JOB2 = re.compile(r"^/v2/jobs/(job-[a-f0-9]{12})$")
 MAX_BODY = 64 * 1024
 
@@ -42,7 +44,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):  # no request bodies or headers in the log
         print(
-            f"{self.address_string()} {self.command} {self.path.split('?')[0]} {args[1] if len(args) > 1 else ''}",
+            f"{self.address_string()} {self.command} {self.path.split('?')[0]} "
+            f"{args[1] if len(args) > 1 else ''}",
             flush=True,
         )
 
@@ -86,7 +89,10 @@ class Handler(BaseHTTPRequestHandler):
         service: Service = self.server.service
         if path.startswith("/v2/"):
             if service.onprem is None:
-                raise Conflict("ONPREM_NOT_CONFIGURED", "register the onprem catalog and credential directory first")
+                raise Conflict(
+                    "ONPREM_NOT_CONFIGURED",
+                    "register the onprem catalog and credential directory first",
+                )
             if path == "/v2/environments":
                 if self.command == "POST":
                     result = service.onprem.create(self.body(), self.headers.get("Idempotency-Key"))
@@ -97,7 +103,9 @@ class Handler(BaseHTTPRequestHandler):
             if m := ENV2.fullmatch(path):
                 env_id, action = m.groups()
                 if action and self.command == "POST":
-                    result = service.onprem.command(env_id, action, self.body(), self.headers.get("Idempotency-Key"))
+                    result = service.onprem.command(
+                        env_id, action, self.body(), self.headers.get("Idempotency-Key")
+                    )
                     service.wake.set()
                     return result
                 if action is None and self.command == "GET":
