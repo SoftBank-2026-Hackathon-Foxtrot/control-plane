@@ -311,3 +311,15 @@ python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health',
 ## 마이그레이션 관측
 
 모듈별 상태 수집, 준비 결과 연결, 공용 probe, 화면 계약과 배포 설정은 [관측 연결](docs/migration-observability.md)을 참고하세요.
+
+### Application system telemetry
+
+`appTelemetry` sets the OTLP HTTP `endpoint`, server-managed `applicationId` (from the loaded migration seed; no hardcoded demo name), and `headersSecrets` (`aws` Secrets Manager ARN / `gcp` Secret Manager resource). Platform Terraform copies the exporter header secret into GCP and injects both references. App requests cannot override OTEL settings.
+
+The provisioner injects `OTEL_OWNER_ID` from the persisted organization and `OTEL_DEPLOYMENT_ID` from the deployment record. The updated demo image collects its container cgroup CPU, memory and disk I/O. Docker VM and on-prem app containers use an isolated network; no host agent or host filesystem mount is installed. On-prem exporter credentials come from the control-plane OTLP environment or `appTelemetry.endpoint` / `headersEnv`; nodes must reach the collector privately.
+
+Managed Fargate / Cloud Run app containers share a network namespace within one app instance. Their config sets `OTEL_NETWORK_SCOPE=app-instance`; only the API container reports network counters, which include its app workers and tunnel. CPU/memory/I/O remain container-scoped; missing kernel counters or resource limits remain missing. Shared filesystem capacity is not reported. Existing deployments need the updated image and configuration; changing this repository does not redeploy them.
+
+Monitoring APIs: authenticated workflow-scoped `telemetry/series`, `traces`, `traces/{trace_id}`, and `logs` accept at most six hours. Shared migration measurements use `shared`; only metrics with an emitted environment are compared. Tempo exposes matching workflow spans only. Logs are observation snapshots, paged by `nextCursor`, not app console output. `/v1/telemetry/collection?workflow=...` reports workflow-specific collection state.
+
+The workflow is for the server-configured demo application, not an arbitrary personal application. `/v1/workflows/{id}/monitoring-scope` exposes its workload scope, actors, migration IDs and an allowlist of planned resource endpoints (no secrets). Workflow IDs isolate observations; resource snapshots also validate the stored migration ID. See [system query boundaries](infrastructure/observability/SYSTEM_METRICS.md).

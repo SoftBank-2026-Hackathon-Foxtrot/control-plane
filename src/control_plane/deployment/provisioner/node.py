@@ -23,15 +23,33 @@ class NodeEffectUnconfirmed(TerraformError):
 
 
 class DeploymentExecutor:
-    def __init__(self, terraform, nodes):
+    def __init__(self, terraform, nodes, telemetry=None):
         self.terraform, self.nodes = terraform, nodes
         self.preparations = None
+        self.telemetry = telemetry or {}
 
     def __getattr__(self, name):
         return getattr(self.terraform, name)
 
     def resolve(self, spec, *, require_ready=True):
-        return node_config.resolve(self.nodes, spec, self.preparations, require_ready=require_ready)
+        node = node_config.resolve(self.nodes, spec, self.preparations, require_ready=require_ready)
+        endpoint = self.telemetry.get("endpoint") or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if endpoint:
+            require(
+                bool(self.telemetry.get("applicationId")),
+                "on-prem monitoring requires applicationId",
+            )
+            headers = os.getenv(self.telemetry.get("headersEnv", "OTEL_EXPORTER_OTLP_HEADERS"), "")
+            require(
+                bool(headers),
+                "on-prem monitoring requires exporter headers in the platform environment",
+            )
+            node["telemetry"] = {
+                "endpoint": endpoint,
+                "headers": headers,
+                "applicationId": self.telemetry["applicationId"],
+            }
+        return node
 
     def remote(self, node, payload):
         address = urlsplit(node["dockerHost"])
@@ -110,6 +128,30 @@ class DeploymentExecutor:
                 not reserved.intersection(app.get(field, {})),
                 "app variables cannot override registered node settings",
             )
+        telemetry = node.get("telemetry")
+        if telemetry:
+            for field in ("env", "api_env", "worker_env"):
+                require(
+                    not any(key.startswith("OTEL_") for key in app.get(field, {})),
+                    "OTEL settings belong to the platform",
+                )
+            defaults.update(
+                {
+                    "OTEL_EXPORTER_OTLP_ENDPOINT": telemetry["endpoint"],
+                    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+                    "OTEL_EXPORTER_OTLP_HEADERS": telemetry["headers"],
+                    "OTEL_APPLICATION_ID": telemetry["applicationId"],
+                    "OTEL_SYSTEM_METRICS": "container",
+                    "OTEL_NETWORK_SCOPE": "container",
+                    "OTEL_DEPLOYMENT_ENVIRONMENT": "onprem",
+                    "OTEL_OWNER_ID": spec["org_id"],
+                    "OTEL_DEPLOYMENT_ID": spec["deployment_id"],
+                    "OTEL_RESOURCE_ATTRIBUTES": "application.id="
+                    + telemetry["applicationId"]
+                    + ",deployment.environment.name="
+                    + node["expectedServedBy"],
+                }
+            )
         services = {}
         for index in range(app.get("worker_count", 2) + 1):
             name = "api" if index == 0 else f"worker-{index}"
@@ -119,6 +161,7 @@ class DeploymentExecutor:
                 **app.get("env", {}),
                 **app.get(role + "_env", {}),
                 **node.get(role + "Environment", {}),
+                "OTEL_APP_ROLE": role,
             }
             require(
                 all(isinstance(v, str) and "\x00" not in v for v in values.values()),

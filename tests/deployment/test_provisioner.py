@@ -302,3 +302,59 @@ class HttpTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_app_exporter_settings_are_cloud_scoped_secret_references():
+    import copy
+
+    import pytest
+
+    config = copy.deepcopy(CONFIG)
+    config["appTelemetry"] = {
+        "endpoint": "http://collector.internal:4318",
+        "applicationId": "goods",
+        "headersSecrets": {
+            "aws": "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:otel",
+            "gcp": "projects/replace-with-project-id/secrets/otel",
+        },
+    }
+    for cloud in ("aws", "gcp"):
+        req = spec.parse(
+            {"org": {"id": "testorg"}, "cloud": cloud, "app": {"template": "chiikawa-groupbuy"}},
+            CATALOG,
+            config,
+        )
+        app = spec.render(req, CATALOG, config, "abcd", TODAY)["app"]
+        assert app["env"]["OTEL_SYSTEM_METRICS"] == "container"
+        assert app["env"]["OTEL_APPLICATION_ID"] == "goods"
+        assert app["env"]["OTEL_OWNER_ID"] == "testorg"
+        assert app["env"]["OTEL_DEPLOYMENT_ID"].endswith(cloud + "-abcd")
+        assert f"deployment.environment.name={cloud}" in app["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+        assert (
+            app["secret_env"]["OTEL_EXPORTER_OTLP_HEADERS"]
+            == config["appTelemetry"]["headersSecrets"][cloud]
+        )
+        req["app"]["apiEnv"] = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://other"}
+        with pytest.raises(spec.RequestError, match="OTEL"):
+            spec.render(req, CATALOG, config, "abcd", TODAY)
+
+
+def test_telemetry_uses_loaded_seed_application_instead_of_example_name():
+    from control_plane.deployment.provisioner.app_telemetry import configure_app
+
+    app = {}
+    configure_app(
+        app,
+        {
+            "applicationId": "chiikawa",
+            "appTelemetry": {
+                "applicationId": "goods",
+                "endpoint": "http://collector:4318",
+                "headersSecrets": {"aws": "secret"},
+            },
+        },
+        "aws",
+        owner="owner",
+        deployment="deployment",
+    )
+    assert app["env"]["OTEL_APPLICATION_ID"] == "chiikawa"

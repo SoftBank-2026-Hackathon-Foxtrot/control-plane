@@ -257,6 +257,12 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
     # platform's proxies so a migration can swap what is behind them. Request env wins.
     if config.get("appEnv"):
         app["env"] = {**config["appEnv"], **app.get("env", {})}
+    from .app_telemetry import configure_app
+
+    try:
+        configure_app(app, config, cloud, owner=req["org"]["id"], deployment=dep)
+    except ValueError as error:
+        raise RequestError(str(error)) from error
 
     tfvars = copy.deepcopy(cloud_conf["baseline"])
     target = req["target"]

@@ -27,6 +27,7 @@ from control_plane.domain.models import ResourceKind
 from control_plane.engine.context import Services
 from control_plane.engine.engine import Engine
 from control_plane.errors import ApiError
+from control_plane.monitoring_api import router as monitoring_router
 from control_plane.observations import ObservationLoop
 from control_plane.otel_ingest import router as otel_router
 from control_plane.probes import AppProber, HttpAppProber, ProbeLoop
@@ -190,6 +191,7 @@ def build_platform(settings: Settings) -> Platform:
         from control_plane.deployment.provisioner.__main__ import build, load
 
         catalog, config = load(None)
+        config["applicationId"] = seed.application
         platform.deployment_service = build(config, catalog)
     platform.clients = clients
     return platform
@@ -260,6 +262,7 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
     app.include_router(otel_router)
     app.include_router(telemetry_router)
     app.include_router(system_metrics_router)
+    app.include_router(monitoring_router)
     from control_plane.security_review.api import router as security_review_router
 
     app.include_router(security_review_router)
