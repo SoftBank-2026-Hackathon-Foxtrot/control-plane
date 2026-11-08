@@ -102,6 +102,8 @@ class Migration:
     unknown_operation: str | None = None
     drain: str = "NOT_STARTED"
     rolled_back: bool = False
+    cancelled: bool = False
+    """FINALIZE of a cancelled plan only removes replication objects: the route never moved."""
     gets_until_ready: int = 2
     running_since: datetime | None = None
     running_last: datetime | None = None
@@ -548,8 +550,10 @@ class FakeAdapter:
             migration.target_writes = True
         if action == "ROLLBACK":
             migration.rolled_back = True
+        if action == "CANCEL":
+            migration.cancelled = True
         migration.lifecycle = AFTER[action]
-        if action == "FINALIZE" and "source" in migration.plan:
+        if action == "FINALIZE" and "source" in migration.plan and not migration.cancelled:
             binding = next(
                 binding
                 for binding in self.bindings.values()
@@ -573,7 +577,7 @@ class FakeAdapter:
         lifecycle = migration.lifecycle
         if lifecycle in {"SWITCHED", "ACTIVE"}:
             return "MIXED" if self.kind is ResourceKind.OBJECT_STORAGE else "TARGET"
-        if lifecycle == "COMPLETED" and not migration.rolled_back:
+        if lifecycle == "COMPLETED" and not (migration.rolled_back or migration.cancelled):
             return "TARGET"
         return "SOURCE"
 

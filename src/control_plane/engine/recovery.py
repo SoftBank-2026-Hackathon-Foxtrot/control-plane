@@ -301,6 +301,11 @@ class Abort:
                 continue
             record = await ctx.services.repo.latest_command(ctx.workflow.id, kind, "CANCEL")
             view = await ctx.view(kind, fresh=True)
+            if record is not None and view.lifecycle == "CANCELLED":
+                outcome = await self._clean_up_cancelled(ctx, kind, view.allowed_actions)
+                if not isinstance(outcome, Passed):
+                    return outcome
+                continue
             if view.lifecycle in LEFT_AS_THEY_ARE:
                 continue
             cancellable = view.lifecycle in CANCELLABLE_EARLY and ("CANCEL" in view.allowed_actions)
@@ -310,6 +315,10 @@ class Abort:
             outcome = await self.runner.run(
                 ctx, Command(kind, "CANCEL", expected=expected_after("CANCEL"))
             )
+            if not isinstance(outcome, Passed):
+                return outcome
+            view = await ctx.view(kind, fresh=True)
+            outcome = await self._clean_up_cancelled(ctx, kind, view.allowed_actions)
             if not isinstance(outcome, Passed):
                 return outcome
         if unsafe:
@@ -328,6 +337,35 @@ class Abort:
             # Restore traffic once; the fixed data proxies stay in place.
             ctx.stage.data["abort_traffic_restored"] = True
         return Passed()
+
+    async def _clean_up_cancelled(
+        self, ctx: StageContext, kind: ResourceKind, allowed: list[str] | tuple[str, ...]
+    ) -> Outcome:
+        """Removes what this workflow's CANCEL left behind, so the next migration can start.
+
+        Only for a plan this workflow cancelled itself. A failed cleanup does not hold the abort
+        back: the data stays on its source either way, and the event says what is left.
+        """
+        if not PROFILES[kind].finalize_after_cancel:
+            return Passed()
+        sent = await ctx.services.repo.latest_command(ctx.workflow.id, kind, "ABORT_FINALIZE")
+        if sent is None and "FINALIZE" not in allowed:
+            await ctx.emit(
+                "CANCEL_CLEANUP_SKIPPED", "the adapter does not allow FINALIZE", resource=kind
+            )
+            return Passed()
+        outcome = await self.runner.run(
+            ctx,
+            Command(kind, "FINALIZE", slot="ABORT_FINALIZE", expected=expected_after("FINALIZE")),
+        )
+        if isinstance(outcome, Stop):
+            await ctx.emit(
+                "CANCEL_CLEANUP_FAILED",
+                f"replication objects may remain: {outcome.code}",
+                resource=kind,
+            )
+            return Passed()
+        return outcome
 
     async def _restore_traffic(self, ctx: StageContext) -> Outcome:
         """Users go back to the source if the data is still there. Otherwise weights stay."""

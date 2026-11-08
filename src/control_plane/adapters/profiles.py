@@ -49,6 +49,8 @@ class ResourceProfile(ABC):
     """Whether the workload must stop before this resource's QUIESCE."""
     adapter_judges_advance: ClassVar[bool] = False
     """Whether `readiness.advance` can reach PASS, given the evidence the platform records."""
+    finalize_after_cancel: ClassVar[bool] = False
+    """Whether CANCEL leaves objects behind that only FINALIZE removes."""
 
     def plan_body(
         self, workflow: Workflow, seed: ResourceSeed, resource: ResourceState, scope: str
@@ -124,6 +126,9 @@ class DatabaseProfile(ResourceProfile):
     profile = ATOMIC_LOGICAL_PROFILE
     requires_workload_hold = True
     adapter_judges_advance = True
+    # CANCEL only disables the subscription. Left in place, the next migration that targets this
+    # database is refused at PREPARE ("existing subscription").
+    finalize_after_cancel = True
 
     def plan_body(
         self, workflow: Workflow, seed: ResourceSeed, resource: ResourceState, scope: str
