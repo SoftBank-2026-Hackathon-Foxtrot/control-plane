@@ -103,6 +103,16 @@ variable "onprem_planning" {
   default     = false
 }
 
+variable "onprem_database" {
+  description = "Trusted AWS source and on-prem target for forward DB sync. secretRef fields contain only Secrets Manager ARNs."
+  type = object({
+    source     = object({ host = string, port = number, database = string, writerRole = string, provider = string, providerInstance = string, secretRef = string })
+    target     = object({ host = string, port = number, database = string, writerRole = string, provider = string, secretRef = string })
+    bindingRef = optional(string)
+  })
+  default = null
+}
+
 variable "onprem_plan_actors" {
   description = "Process counts for deployments linked to an independent on-prem plan."
   type        = map(number)

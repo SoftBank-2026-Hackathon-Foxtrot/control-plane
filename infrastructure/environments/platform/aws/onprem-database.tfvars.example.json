@@ -1,0 +1,22 @@
+{
+  "onprem_planning": true,
+  "onprem_database": {
+    "source": {
+      "provider": "AWS_RDS",
+      "providerInstance": "arn:aws:rds:ap-northeast-2:952561150367:db:chiikawa-aws-3e3d-db",
+      "host": "chiikawa-aws-3e3d-db.cxg4inxrw1qh.ap-northeast-2.rds.amazonaws.com",
+      "port": 5432,
+      "database": "app",
+      "writerRole": "app",
+      "secretRef": "arn:aws:secretsmanager:ap-northeast-2:952561150367:secret:foxtrot/app/chiikawa-aws-3e3d/db-operator-iE9FAT"
+    },
+    "target": {
+      "host": "100.115.99.73",
+      "port": 5432,
+      "database": "appdb",
+      "provider": "SELF_MANAGED",
+      "writerRole": "app",
+      "secretRef": "arn:aws:secretsmanager:ap-northeast-2:952561150367:secret:foxtrot/app/chiikawa/onprem/db-operator-wJRxal"
+    }
+  }
+}

@@ -13,7 +13,7 @@ from fastapi import Depends, Header, Request
 from control_plane.auth import LOCAL_USER, AuthService
 from control_plane.clock import Clock
 from control_plane.config import Settings
-from control_plane.domain.models import Session
+from control_plane.domain.models import ResourceKind, Session
 from control_plane.errors import ApiError
 from control_plane.onprem_plans import OnpremPlans
 from control_plane.seed import Seed
@@ -38,7 +38,12 @@ class ApiContext:
     @property
     def onprem_plans(self) -> OnpremPlans:
         return OnpremPlans(
-            self.repo.table, self.clock, self.seed.application, set(self.seed.environments)
+            self.repo.table,
+            self.clock,
+            self.seed.application,
+            set(self.seed.environments),
+            database=self.workflows.adapters.get(ResourceKind.DATABASE),
+            endpoints=self.settings.onprem_database if self.settings.onprem_planning else None,
         )
 
     @property
