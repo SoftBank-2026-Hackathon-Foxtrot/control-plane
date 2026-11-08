@@ -46,4 +46,60 @@ uv run python -m control_plane.security_review.prepare --config /path/to/setup-c
 
 준비 설정의 읽기·적용 참조에는 필요한 준비 계정을 연결한다. 전용 label·공개 접근 방지·빈 버킷(이전 버전 포함)을 확인하고 앱 계정의 objectUser 권한을 복원한다. 앱 버킷은 수정하지 않는다.
 
-로컬 예시는 `config/security-review.fixture.json`, `config/security-review.seed.yaml`과 `control_plane.security_review.demo:create_demo`를 사용한다. fixture는 로컬에서만 허용되며 화면에 예시 데이터로 표시한다. 실제 계정·비밀 없이 scan→plan→apply→verify를 검증할 수 있다. AI는 연결하지 않았다.
+로컬 예시는 `config/security-review.fixture.json`, `config/security-review.seed.yaml`과 `control_plane.security_review.demo:create_demo`를 사용한다. GCP fixture는 로컬에서만 허용되며 화면에 예시 데이터로 표시한다. 실제 계정·비밀 없이 scan→plan→apply→verify를 검증할 수 있다.
+
+## 객체 접근 검증과 운영 인계
+
+/security에서 AWS → GCP와 온프렘 샌드박스를 선택한다. 두 경로 모두 주문 앱의 영수증 접근, 업무 외 버킷 접근, 복사 계정 영향을 살펴본다. 근거의 출처와 승인 효과는 다르다.
+
+| 대상 | 조사와 검증 | 사람이 결정하는 내용 |
+| --- | --- | --- |
+| AWS → GCP | 지정 AWS 정책과 GCP 직접 IAM을 조회한다. 선택적으로 두 실제 계정의 객체 요청을 추가한다. 같은 앱의 활성 GCP workflow와 객체 migration ID를 조사 시점에 기록한다. | 변경안을 보고 기존 데모 버킷 IAM 변경을 승인한다. 적용 직전에 정책·준비 응답·설정된 실측·활성 workflow 식별자와 단계가 여전히 같은지 검사한다. 이후 verify에서 정책과 실측을 다시 확인한다. |
+| 온프렘 | 배포 번들의 앱·복사 계정 권한과 handoff의 버킷 이름을 읽는다. 일회용 SeaweedFS 두 개에서 기존 설정과 변경 설정을 각각 기동하고 합성 객체만 사용한다. | 시험 성공 후 10분 안에 승인 또는 보류한다. 승인 시 앱 권한 변경 패치와 역방향 패치를 다운로드할 수 있다. 실제 호스트 반영은 운영자의 배포 절차에서 수행한다. |
+
+### GCP 실측 연결
+
+기존 리뷰 설정에 다음 선택 항목을 추가한다. `probes`를 생략한 기존 설정은 저장 키와 조회 동작을 유지한다. 이 항목을 추가하면 해당 설정의 별도 리뷰 이력을 시작한다.
+
+```json
+{
+  "probes": {
+    "appSecretRef": "env:SECURITY_GCP_APP_PROBE",
+    "copySecretRef": "env:SECURITY_GCP_COPY_PROBE",
+    "copyEmail": "copy@example-project.iam.gserviceaccount.com"
+  }
+}
+```
+
+앱 버킷에 비어 있지 않은 합성 객체 `receipts/security-review-canary.json`을 미리 준비한다. 두 secret은 지정된 앱·복사 서비스 계정의 자격 증명이다. 서버는 계정 이메일을 대조하고 읽기 전용 OAuth 범위로 시험한다. 객체 본문과 키는 결과에 보관하지 않는다. 서버는 빈 목록 응답도 허용으로 분류한다. 조회 오류, 객체 부재, 인증 오류, 원인이 불명확한 403은 미확인으로 남긴다. 지정 앱이 영수증을 읽지 못하거나, 복사 계정이 카나리를 읽지 못하거나, 추가 버킷 직접 권한과 실측이 일치하지 않으면 변경 적용 또는 재검사 완료로 진행하지 않는다. 카나리 읽기는 해당 계정의 읽기 능력만 확인한다. 실제 작업의 전체 진행률·쓰기 성공·상속 권한의 부여 경로까지 보증하지 않는다.
+
+### 온프렘 시험 실행
+
+1. 실행 호스트에 배포 도구와 같은 SeaweedFS 4.48 바이너리를 준비한다. `CONTROL_PLANE_SECURITY_WEED_BINARY`에 절대 경로를 설정한다. 샌드박스 프로세스의 임시 디렉터리, 루프백 포트와 실행 권한이 필요하다. 기본 이미지는 바이너리를 포함하지 않는다.
+2. 기존 리뷰 사용자 allowlist를 재사용한다. GCP 없이 온프렘만 연결하려면 `CONTROL_PLANE_SECURITY_REHEARSAL_USERS`에 허용된 로그인 사용자 ID를 쉼표로 구분해 지정한다. 사용자 ID는 기존 세션의 `/v1/me`에서 확인한다.
+3. `GET /v1/security-review/onprem/rehearsal`로 상태와 revision을 읽는다. 같은 경로의 `/run`, `/approve`, `/hold`에 현재 revision을 POST한다. 기존 세션·Origin·CSRF 및 저장소 CAS를 사용한다. 요청으로 호스트, 계정, 명령, 실행 파일 또는 버킷을 지정할 수 없다.
+4. 설정마다 앱 계정으로 합성 영수증을 쓰고 읽어 내용을 대조한 뒤 별도 버킷 목록을 조회한다. 복사 계정으로 합성 객체를 쓰고 CopyObject를 실행한 뒤 읽은 내용을 대조한다. 기본 설정에서 세 요청이 허용되고, 변경 후 업무 외 버킷 조회만 거부되어야 승인할 수 있다.
+5. 운영자는 승인된 RFC 6902 패치의 계정과 기존 권한 test 연산을 모두 확인한 뒤 배포 원본에 반영한다. 파일 전체를 덮어쓰지 않는다. 실제 호스트의 적용과 재시작, 운영 앱·복사 작업 재검사는 별도 단계다. 설정이 이미 달라졌다면 해당 패치를 적용할 수 없으므로 원본과 다시 비교한다. 복구 패치도 동일하게 현재 값부터 검사한다.
+
+기본 후보는 규칙으로 생성한다. 선택적으로 `CONTROL_PLANE_SECURITY_BEDROCK_MODEL`과 해당 모델의 Bedrock 호출 권한 및 리전을 설정하면, 모델이 합성 시험 결과를 보고 앱의 허용 동작 후보를 고른다. 후보는 서버가 허용한 세 동작만 담을 수 있으며 항상 영수증 버킷으로 제한한다. 첫 후보가 실패하면 한 번 더 샌드박스 근거를 보내 재시험한다. 모델 호출 실패는 실패 상태로 기록한다. 승인과 보류 기록에는 검토한 결과·사용자·시각·revision이 포함된다. 최근 20개 기록을 보존한다. 완료된 시험을 재현하는 도구이며 실제 온프렘 호스트나 운영 중인 복사 작업의 실시간 검사와 구분한다.
+
+### 확인 순서
+
+로컬에서는 기존 seed, fixture와 메모리 저장소로 `control_plane.security_review.demo:create_demo`를 실행하고, 프론트의 `CONTROL_PLANE_PROXY_TARGET`을 그 서버로 연결한다. AWS → GCP 화면만 예시 데이터를 사용한다. 온프렘 샌드박스는 위 실행기가 있어야 실제 요청을 수행한다. 먼저 샌드박스에서 두 권한 설정의 응답과 패치를 검토한다. 실제 GCP 환경에서는 읽기 전용 scan과 계정·버킷·결과를 먼저 확인하고 기존 writer 연결에서만 apply를 사용할 수 있다.
+
+컨트롤 플레인 저장소에서 PowerShell로 로컬 데모를 실행하는 예다. 실행기 경로는 설치 위치에 맞춘다. 이 메모리 데모의 기록은 서버 재시작 시 초기화된다.
+
+```powershell
+$env:CONTROL_PLANE_ENVIRONMENT = 'local'
+$env:CONTROL_PLANE_HOST = '127.0.0.1'
+$env:CONTROL_PLANE_AUTH_DISABLED = 'true'
+$env:CONTROL_PLANE_DYNAMODB_ENDPOINT = 'memory'
+$env:CONTROL_PLANE_SEED_PATH = 'config/security-review.seed.yaml'
+$env:CONTROL_PLANE_SECURITY_REVIEW_CONFIG = 'config/security-review.fixture.json'
+$env:CONTROL_PLANE_SECURITY_WEED_BINARY = 'C:\tools\seaweedfs-4.48\weed.exe'
+$env:TRAFFIC_SERVICE_TOKEN = 'local'
+$env:WORKLOAD_TOKEN = 'local'
+uv run uvicorn control_plane.security_review.demo:create_demo --factory --host 127.0.0.1 --port 18112
+```
+
+프론트 저장소의 두 번째 터미널에서 `VITE_API_MODE=real`, `CONTROL_PLANE_PROXY_TARGET=http://127.0.0.1:18112`를 환경변수로 설정하고 `vp dev --host 127.0.0.1 --port 14212`를 실행한다. 브라우저에서 `/security#onprem`을 열어 시험 → 승인/보류 → 패치 저장을 확인한다.

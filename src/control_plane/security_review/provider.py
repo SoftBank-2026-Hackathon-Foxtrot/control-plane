@@ -18,12 +18,19 @@ from .models import ReviewConfig
 
 
 class Provider(Protocol):
+    def probe_access(self) -> dict[str, str]: ...
+
     def collect(self) -> dict[str, Any]: ...
 
     def apply(self, policy: dict[str, Any]) -> None: ...
 
 
 class CloudProvider:
+    def probe_access(self) -> dict[str, str]:
+        from .gcp_probe import observe
+
+        return observe(self.config, self.region)
+
     def __init__(self, config: ReviewConfig, region: str) -> None:
         self.config, self.region = config, region
 
@@ -122,6 +129,9 @@ class CloudProvider:
 
 class FixtureProvider:
     """Explicit local integration fixture. Uses the same evaluator, API and persistence path."""
+
+    def probe_access(self) -> dict[str, str]:
+        raise ValueError("Runtime access probes require cloud identities")
 
     def __init__(self, config: ReviewConfig) -> None:
         self.writes = 0
