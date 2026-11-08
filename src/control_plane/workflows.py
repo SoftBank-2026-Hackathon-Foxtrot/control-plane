@@ -108,14 +108,24 @@ class WorkflowService:
             target_configuration=target_configuration,
         )
         plans = []
+        onprem = "onprem" in (source_env, target_env)
         for kind in (ResourceKind.DATABASE, ResourceKind.REDIS):
+            if onprem and kind not in resources:
+                # Global endpoint defaults describe a fixed cloud pair, not this workflow.
+                continue
             plan = await self.bindings.plan(workflow, kind, resources.get(kind))
             if plan is not None:
                 plans.append(plan)
+        stages = []
+        for index, definition in enumerate(PLAN):
+            stage = StageState(index=index, kind=definition.kind)
+            if onprem and resources and definition.kind is StageKind.PREPARE:
+                stage.data["explicitEndpointKinds"] = sorted(kind.value for kind in resources)
+            stages.append(stage)
         try:
             await self.repo.create_workflow(
                 workflow,
-                stages=(StageState(index=i, kind=stage.kind) for i, stage in enumerate(PLAN)),
+                stages=stages,
                 resources=plans,
             )
         except ActiveWorkflowExists as error:

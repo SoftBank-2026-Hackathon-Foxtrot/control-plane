@@ -23,15 +23,33 @@ class NodeEffectUnconfirmed(TerraformError):
 
 
 class DeploymentExecutor:
-    def __init__(self, terraform, nodes):
+    def __init__(self, terraform, nodes, telemetry=None):
         self.terraform, self.nodes = terraform, nodes
         self.preparations = None
+        self.telemetry = telemetry or {}
 
     def __getattr__(self, name):
         return getattr(self.terraform, name)
 
     def resolve(self, spec, *, require_ready=True):
-        return node_config.resolve(self.nodes, spec, self.preparations, require_ready=require_ready)
+        node = node_config.resolve(self.nodes, spec, self.preparations, require_ready=require_ready)
+        endpoint = self.telemetry.get("endpoint") or os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+        if endpoint:
+            require(
+                bool(self.telemetry.get("applicationId")),
+                "on-prem monitoring requires applicationId",
+            )
+            headers = os.getenv(self.telemetry.get("headersEnv", "OTEL_EXPORTER_OTLP_HEADERS"), "")
+            require(
+                bool(headers),
+                "on-prem monitoring requires exporter headers in the platform environment",
+            )
+            node["telemetry"] = {
+                "endpoint": endpoint,
+                "headers": headers,
+                "applicationId": self.telemetry["applicationId"],
+            }
+        return node
 
     def remote(self, node, payload):
         address = urlsplit(node["dockerHost"])
@@ -110,6 +128,30 @@ class DeploymentExecutor:
                 not reserved.intersection(app.get(field, {})),
                 "app variables cannot override registered node settings",
             )
+        telemetry = node.get("telemetry")
+        if telemetry:
+            for field in ("env", "api_env", "worker_env"):
+                require(
+                    not any(key.startswith("OTEL_") for key in app.get(field, {})),
+                    "OTEL settings belong to the platform",
+                )
+            defaults.update(
+                {
+                    "OTEL_EXPORTER_OTLP_ENDPOINT": telemetry["endpoint"],
+                    "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+                    "OTEL_EXPORTER_OTLP_HEADERS": telemetry["headers"],
+                    "OTEL_APPLICATION_ID": telemetry["applicationId"],
+                    "OTEL_SYSTEM_METRICS": "container",
+                    "OTEL_NETWORK_SCOPE": "container",
+                    "OTEL_DEPLOYMENT_ENVIRONMENT": "onprem",
+                    "OTEL_OWNER_ID": spec["org_id"],
+                    "OTEL_DEPLOYMENT_ID": spec["deployment_id"],
+                    "OTEL_RESOURCE_ATTRIBUTES": "application.id="
+                    + telemetry["applicationId"]
+                    + ",deployment.environment.name="
+                    + node["expectedServedBy"],
+                }
+            )
         services = {}
         for index in range(app.get("worker_count", 2) + 1):
             name = "api" if index == 0 else f"worker-{index}"
@@ -119,6 +161,7 @@ class DeploymentExecutor:
                 **app.get("env", {}),
                 **app.get(role + "_env", {}),
                 **node.get(role + "Environment", {}),
+                "OTEL_APP_ROLE": role,
             }
             require(
                 all(isinstance(v, str) and "\x00" not in v for v in values.values()),
@@ -253,7 +296,7 @@ class DeploymentExecutor:
             },
         }
 
-    def apply(self, env_id, cloud, plan):
+    def apply(self, env_id, cloud, plan, *, retry_owned_empty=False):
         if cloud != "onprem":
             return self.terraform.apply(env_id, cloud, plan)
         saved = json.loads((self.terraform.work_root / env_id / plan).read_text())
@@ -261,7 +304,11 @@ class DeploymentExecutor:
         if saved["nodeDigest"] != node_config.fingerprint(node):
             raise TerraformError("Registered node changed after planning; create a fresh plan")
         action = "destroy" if saved["destroy"] else "apply"
-        self.remote(node, self.payload(env_id, spec, node, action))
+        payload = self.payload(env_id, spec, node, action)
+        if retry_owned_empty:
+            require(action == "apply", "only an application apply can be retried")
+            payload["retryOwnedEmpty"] = True
+        self.remote(node, payload)
         return None if saved["destroy"] else self.handoff(env_id, spec, node)
 
     def reconcile(self, env_id, cloud, spec):
@@ -270,6 +317,13 @@ class DeploymentExecutor:
         result = self.remote(node, self.payload(env_id, spec, node, "inspect"))
         if result.get("released"):
             return None
+        directory = self.terraform.work_root / env_id
+        if (
+            result.get("ownedEmpty")
+            and (directory / "reviewed.tfplan").is_file()
+            and not (directory / "destroy.tfplan").exists()
+        ):
+            return {"retryOwnedEmpty": True}
         return self.handoff(env_id, spec, node)
 
     def check(self, handoff):

@@ -191,6 +191,29 @@ async def test_prepare_resizes_once_across_restart_and_waits_for_app_ready(
     assert target.get(chosen["environmentId"])["appliedSnapshot"]["app"]["cpu"] == 2
 
 
+@pytest.mark.parametrize("source,destination", [("aws", "onprem"), ("onprem", "gcp")])
+async def test_isolated_onprem_plans_reject_sizing_without_creating_work(
+    console: Console, target: Service, source: str, destination: str
+) -> None:
+    context = console.world.platform.context
+    object.__setattr__(
+        context, "settings", context.settings.model_copy(update={"onprem_planning": True})
+    )
+    await console.login()
+    chosen = await selection(console)
+    job_count = target.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+    response = await console.http.post(
+        "/v1/workflows",
+        json={"sourceEnv": source, "targetEnv": destination, "targetConfiguration": chosen},
+        headers=console.change_headers(),
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "TARGET_SIZING_UNAVAILABLE"
+    assert (await console.http.get("/v1/workflows")).json() == []
+    assert await context.repo.active_workflow_id() is None
+    assert target.store.db.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == job_count
+
+
 @pytest.mark.parametrize("failure", ["plan", "address", "traffic", "binding"])
 async def test_failed_or_serving_target_never_starts_cdc(
     console: Console, target: Service, failure: str

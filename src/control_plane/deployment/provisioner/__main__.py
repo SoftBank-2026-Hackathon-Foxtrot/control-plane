@@ -53,7 +53,10 @@ def build(config: dict, catalog: dict) -> Service:
     from .node_registration import configure
     from .readiness import AppChecker
 
-    executor = DeploymentExecutor(terraform, {})
+    telemetry = dict(config.get("appTelemetry") or {})
+    if config.get("applicationId"):
+        telemetry["applicationId"] = config["applicationId"]
+    executor = DeploymentExecutor(terraform, {}, telemetry)
     service = Service(
         Store(work / "provisioner.db"),
         executor,

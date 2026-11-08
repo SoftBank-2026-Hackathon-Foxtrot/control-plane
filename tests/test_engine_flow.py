@@ -35,7 +35,7 @@ async def test_a_migration_completes_in_the_planned_order(world: World) -> None:
             "RESUME",
             "FINALIZE",
         ]
-    assert world.traffic.history == [5, 25, 50, 100]
+    assert world.traffic.history == [5, 50, 100]
     moved = [
         event
         for event in (await world.repo.events(workflow.id, limit=5000))[0]

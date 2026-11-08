@@ -87,7 +87,7 @@ async def test_a_migration_without_a_database_completes() -> None:
             "RESUME",
             "FINALIZE",
         ]
-    assert world.traffic.history == [5, 25, 50, 100]
+    assert world.traffic.history == [5, 50, 100]
     assert "STAGE_SKIPPED" in await world.event_types(workflow.id)
 
 

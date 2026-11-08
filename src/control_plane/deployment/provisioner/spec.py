@@ -156,7 +156,7 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
         for field in ("worker_count", "api_workers"):
             count = app.get(field, 2 if field == "worker_count" else 4)
             require(
-                type(count) is int and (0 if field == "worker_count" else 1) <= count <= 8,
+                type(count) is int and 1 <= count <= 8,
                 f"invalid {field}",
             )
         app.setdefault("port", 80)
@@ -257,6 +257,12 @@ def render(req: dict, catalog: dict, config: dict, suffix: str, today: dt.date) 
     # platform's proxies so a migration can swap what is behind them. Request env wins.
     if config.get("appEnv"):
         app["env"] = {**config["appEnv"], **app.get("env", {})}
+    from .app_telemetry import configure_app
+
+    try:
+        configure_app(app, config, cloud, owner=req["org"]["id"], deployment=dep)
+    except ValueError as error:
+        raise RequestError(str(error)) from error
 
     tfvars = copy.deepcopy(cloud_conf["baseline"])
     target = req["target"]

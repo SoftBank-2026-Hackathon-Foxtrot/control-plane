@@ -427,5 +427,5 @@ async def test_a_whole_migration_moves_traffic_through_the_real_service(
         round(patch["random_steering"]["pool_weights"]["pool-b"] * 100)
         for patch in cloudflare.patches
     ]
-    assert shares == [5, 25, 50, 100]
+    assert shares == [5, 50, 100]
     assert cloudflare.pool_weights == {"pool-a": 0.0, "pool-b": 1.0}

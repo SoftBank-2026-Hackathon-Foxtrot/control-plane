@@ -39,6 +39,8 @@ class ObservationStore:
         error: str | None = None,
         expires_at: int | None = None,
         source: str = "OTEL",
+        trace_id: str | None = None,
+        span_id: str | None = None,
     ) -> None:
         """CAS rejects older responses. Collection errors retain the last success."""
         pk, sk = f"WORKFLOW#{workflow}", f"OBS_LATEST#{resource}"
@@ -63,6 +65,8 @@ class ObservationStore:
                 progress_at = stamp(at)
             value = {
                 "resource": resource,
+                "traceId": trace_id,
+                "spanId": span_id,
                 "source": source,
                 "collectedAt": stamp(at),
                 "collectionError": error,

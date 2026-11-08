@@ -214,8 +214,7 @@ async def test_a_workload_that_stops_reporting_mid_cutover_blocks_it(world: Worl
 async def test_canary_failure_returns_traffic_by_itself(world: World) -> None:
     workflow = await world.start()
     await world.at_stage(workflow.id, 3)
-    for _ in range(10):
-        await world.tick()
+    await world.tick()
     assert world.traffic.current == 5
     world.prober.light_ok["gcp"] = False
     final = await world.until(workflow.id, WorkflowStatus.HALTED)
@@ -242,15 +241,14 @@ async def test_slow_target_fails_the_gate(world: World) -> None:
 async def test_a_failed_step_later_returns_only_to_the_step_before(world: World) -> None:
     workflow = await world.start()
     await world.at_stage(workflow.id, TRAFFIC_STAGE)
-    for _ in range(5):
-        await world.tick()
-    assert world.traffic.current == 25
-    for _ in range(int(world.seed.timings.observation_window) + 5):
-        await world.tick()
+    await world.tick()
     assert world.traffic.current == 50
+    for _ in range(int(world.seed.timings.observation_window) + 1):
+        await world.tick()
+    assert world.traffic.current == 100
     world.prober.light_ok["gcp"] = False
     await world.until(workflow.id, WorkflowStatus.HALTED)
-    assert world.traffic.current == 25
+    assert world.traffic.current == 50
     stages = await world.repo.stages(workflow.id)
     assert stages[TRAFFIC_STAGE].kind is StageKind.TRAFFIC
 

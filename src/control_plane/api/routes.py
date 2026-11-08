@@ -45,6 +45,7 @@ from control_plane.domain.models import ResourceKind, ResourceState, Workflow
 from control_plane.errors import ApiError
 from control_plane.observation_projection import freshness, present, timestamp
 from control_plane.observations import ObservationStore, observation_state
+from control_plane.onprem_plans import ONPREM_PREFIX
 from control_plane.workflows import CommandInput
 
 router = APIRouter()
@@ -129,14 +130,17 @@ async def workspaces(session: CurrentSession) -> list[Workspace]:
 @router.get("/v1/applications", response_model_by_alias=True)
 async def applications(_: CurrentSession, context: Context) -> list[ApplicationView]:
     seed = context.seed
+    environments = [
+        EnvironmentView(name=name, traffic_pool=env.traffic_pool, actors=env.actors)
+        for name, env in seed.environments.items()
+    ]
+    if context.settings.onprem_planning and "onprem" not in seed.environments:
+        environments.append(EnvironmentView(name="onprem", traffic_pool="onprem", actors={}))
     return [
         ApplicationView(
             id=seed.application,
             scope=seed.scope,
-            environments=[
-                EnvironmentView(name=name, traffic_pool=env.traffic_pool, actors=env.actors)
-                for name, env in seed.environments.items()
-            ],
+            environments=environments,
             resources=[kind for kind in ResourceKind if kind in seed.managed],
         )
     ]
@@ -162,8 +166,10 @@ async def application_bindings(
 
 
 @router.get("/v1/workflows", response_model_by_alias=True)
-async def list_workflows(_: CurrentSession, context: Context) -> list[Workflow]:
+async def list_workflows(session: CurrentSession, context: Context) -> list[Workflow]:
     found = [await context.repo.workflow(i) for i in await context.repo.workflow_ids()]
+    if context.settings.onprem_planning:
+        found.extend(await context.onprem_plans.list(session.user.id))
     return sorted(
         (workflow for workflow in found if workflow),
         key=lambda workflow: workflow.created_at,
@@ -179,7 +185,11 @@ async def create_workflow(
     context: Context,
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
+    onprem = context.settings.onprem_planning and "onprem" in (body.source_env, body.target_env)
+
     async def execute() -> WorkflowDetail:
+        if onprem:
+            return (await context.onprem_plans.create(body, session.user)).detail()
         # The provisioner has one process/store. This admission lock serializes its public
         # updates with claiming the workflow's durable active slot.
         async with context.mutation_lock:
@@ -217,7 +227,7 @@ async def create_workflow(
     return await once(
         context.repo,
         user_id=session.user.id,
-        path="/v1/workflows",
+        path="/v1/onprem/workflows" if onprem else "/v1/workflows",
         key=idempotency_key,
         body=body.model_dump(),
         success_status=201,
@@ -226,7 +236,11 @@ async def create_workflow(
 
 
 @router.get("/v1/workflows/{workflow_id}", response_model_by_alias=True)
-async def get_workflow(workflow_id: str, _: CurrentSession, context: Context) -> WorkflowDetail:
+async def get_workflow(
+    workflow_id: str, session: CurrentSession, context: Context
+) -> WorkflowDetail:
+    if workflow_id.startswith(ONPREM_PREFIX):
+        return (await context.onprem_plans.get(workflow_id, session.user.id)).detail()
     workflow = await _workflow(context, workflow_id)
     detail = await _detail(context, workflow)
     # Newer release branches already collect and project observations independently (including
@@ -246,11 +260,13 @@ async def get_workflow(workflow_id: str, _: CurrentSession, context: Context) ->
 @router.get("/v1/workflows/{workflow_id}/events", response_model_by_alias=True)
 async def workflow_events(
     workflow_id: str,
-    _: CurrentSession,
+    session: CurrentSession,
     context: Context,
     after: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> EventPage:
+    if workflow_id.startswith(ONPREM_PREFIX):
+        return (await context.onprem_plans.get(workflow_id, session.user.id)).page(after, limit)
     await _workflow(context, workflow_id)
     events, next_cursor = await context.repo.events(workflow_id, after=after, limit=limit)
     return EventPage(events=events, next_cursor=next_cursor)
@@ -265,6 +281,8 @@ async def workflow_command(
     idempotency_key: Annotated[str | None, Header()] = None,
 ) -> Response:
     async def execute() -> WorkflowDetail:
+        if workflow_id.startswith(ONPREM_PREFIX):
+            return (await context.onprem_plans.command(workflow_id, body, session.user)).detail()
         updated = await context.workflows.apply(
             workflow_id,
             CommandInput(
@@ -501,11 +519,14 @@ def _resource(
 async def observations(
     workflow_id: str,
     context: Context,
-    _: CurrentSession,
+    session: CurrentSession,
     since: datetime | None = None,
     cursor: str | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 200,
 ) -> dict[str, Any]:
+    if workflow_id.startswith(ONPREM_PREFIX):
+        await context.onprem_plans.get(workflow_id, session.user.id)
+        return {"observations": [], "nextCursor": None}
     await _workflow(context, workflow_id)
     now = context.clock.now()
     since = since or now - timedelta(minutes=5)

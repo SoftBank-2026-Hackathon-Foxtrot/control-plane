@@ -12,6 +12,7 @@ Foxtrot 플랫폼 백엔드입니다. 세 이전 서버(DB, Redis, 오브젝트)
 - 온프렘 PC 등록과 앱 배포: [docs/onprem-platform-deployment.md](docs/onprem-platform-deployment.md)
 - DB 에이전트 연결: [docs/native-db-agent.md](docs/native-db-agent.md). 기본은 PostgreSQL 직접 논리 복제입니다. DMS 작업과 Promote를 사용하지 않습니다.
 - 콘솔의 Proxy·Worker 상태와 복제량: [모듈 관측값 전달](docs/module-observations.md).
+- 실제 AWS ↔ GCP E2E 실행 기록(11-07~08, 워크플로 5개, DB 쓰기 정지 1.4초·Redis 정지 0.1초·트래픽 자동 되돌림): [docs/e2e/2026-11-07-08.md](docs/e2e/2026-11-07-08.md)
 
 ## 구조
 
@@ -147,6 +148,7 @@ uv run python -m bench.crash_during_hold --runs 20
 - **DB 보존 기간:** DB 어댑터는 `RESUME` 후 보존 기간(기본 3600초)이 지나야 FINALIZE를 받습니다. 시연에서는 어댑터 설정을 줄입니다. 그동안 7단계는 30초마다 다시 시도합니다.
 - **트래픽 서비스가 LB의 유일한 변경 주체:** 플랫폼은 Cloudflare를 직접 부르지 않습니다. 시드의 `trafficPool`에는 트래픽 서비스 `CF_POOL_IDS`의 환경 이름(`aws`, `gcp`)을 적습니다.
 - **가중치 단위:** 트래픽 팀이 실제 Cloudflare에서 95:5(0.95:0.05)를 적용해 성공했습니다(traffic `docs/traffic-verification-20261105.md`). 그래서 요청한 비율을 그대로 보냅니다.
+- **데모 트래픽 관찰:** 기본 전환 순서는 대상 5% → 50% → 100%이며 각 가중치의 관찰 시간은 3초입니다(`observationWindow`). 짧은 구간에서도 검사 결과를 모으도록 업무 검사 간격은 1초, 경량 검사는 초당 5회 목표, 집계 구간은 1초, 최소 표본은 3건입니다. API 호출과 엔진 틱 시간이 추가되며 Cloudflare 실제 수신 비율의 수렴을 보장하지 않습니다. 트래픽 자동 롤백과 마이그레이션 롤백 로직은 그대로입니다.
 - **결과 불명 작업:** 트래픽 서비스의 작업이 UNKNOWN이면 플랫폼은 다음 가중치 변경을 보내지 않고, `command_timeout` 뒤 멈춥니다. 이전 실행 주체가 멈췄다는 근거는 사람이 확인해 트래픽 서비스에 RECONCILE을 보냅니다.
 
 ## 배포
@@ -311,3 +313,19 @@ python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health',
 ## 마이그레이션 관측
 
 모듈별 상태 수집, 준비 결과 연결, 공용 probe, 화면 계약과 배포 설정은 [관측 연결](docs/migration-observability.md)을 참고하세요.
+
+### Application system telemetry
+
+`appTelemetry` sets the OTLP HTTP `endpoint`, server-managed `applicationId` (from the loaded migration seed; no hardcoded demo name), and `headersSecrets` (`aws` Secrets Manager ARN / `gcp` Secret Manager resource). Platform Terraform copies the exporter header secret into GCP and injects both references. App requests cannot override OTEL settings.
+
+The provisioner injects `OTEL_OWNER_ID` from the persisted organization and `OTEL_DEPLOYMENT_ID` from the deployment record. The updated demo image collects its container cgroup CPU, memory and disk I/O. Docker VM and on-prem app containers use an isolated network; no host agent or host filesystem mount is installed. On-prem exporter credentials come from the control-plane OTLP environment or `appTelemetry.endpoint` / `headersEnv`; nodes must reach the collector privately.
+
+Managed Fargate / Cloud Run app containers share a network namespace within one app instance. Their config sets `OTEL_NETWORK_SCOPE=app-instance`; only the API container reports network counters, which include its app workers and tunnel. CPU/memory/I/O remain container-scoped; missing kernel counters or resource limits remain missing. Shared filesystem capacity is not reported. Existing deployments need the updated image and configuration; changing this repository does not redeploy them.
+
+Monitoring APIs: authenticated workflow-scoped `telemetry/series`, `traces`, `traces/{trace_id}`, and `logs` accept at most six hours. Shared migration measurements use `shared`; only metrics with an emitted environment are compared. Tempo exposes matching workflow spans only. Logs are observation snapshots, paged by `nextCursor`, not app console output. `/v1/telemetry/collection?workflow=...` reports workflow-specific collection state.
+
+The workflow is for the server-configured demo application, not an arbitrary personal application. `/v1/workflows/{id}/monitoring-scope` exposes its workload scope, actors, migration IDs and an allowlist of planned resource endpoints (no secrets). Workflow IDs isolate observations; resource snapshots also validate the stored migration ID. See [system query boundaries](infrastructure/observability/SYSTEM_METRICS.md).
+
+`GET /v1/telemetry/workflows` is the live observability selector: it excludes planned/completed/aborted workflows and requires a currently fresh, available module observation at the current clock time. HALTED/WAITING_APPROVAL remain selectable while reporting. It does not truncate to the last two runs. `/v1/workflows` and explicit workflow detail links retain history.
+
+앱 컨테이너 수집 범위와 기존 공용 배포 연결은 [시스템 메트릭](docs/system-metrics.md)을 참고합니다.

@@ -226,13 +226,35 @@ Idempotency-Key: goods-home-app-1
 확인한 상태다. 이 검사는 전체 actor의 HOLD 확인을 대신하지 않는다.
 현재 API 4개/worker 2개이면 seed의 온프렘 actors도 각각 4/2로 등록해야
 마이그레이션 시 프로세스 정지 확인이 맞게 동작한다.
-온프렘 준비·배포 API가 migration seed나 adapter resource를 자동 생성하지는 않는다.
+워크플로에 연결한 배포는 등록 노드의 API·worker actor 이름을 온프렘 seed에서 찾아
+프로세스 수를 채운다. 요청에서 수를 직접 지정하면 seed 값과 일치해야 한다. worker는 최소 1개다.
+같은 workload scope의 HOLD는 그 scope에 등록된 모든 actor를 기다린다. 공용 클라우드
+seed에 온프렘 actor를 추가하면 클라우드 간 전환도 그 actor의 응답을 기다린다. 데모를
+독립 운영할 때는 별도 앱 scope와 그 scope를 사용하는 바인딩을 구성한다.
+같은 애플리케이션 화면에서 온프렘 계획을 독립적으로 시연하려면 플랫폼에
+`CONTROL_PLANE_ONPREM_PLANNING=true`를 설정하고 공유 seed는 그대로 둔다.
+원본 또는 대상이 `onprem`인 새 요청은 온프렘 계획 백엔드가 처리한다. 계획과 이벤트는
+사용자별로 따로 저장되고 클라우드 이전 슬롯, HOLD, 어댑터, 트래픽을 사용하지 않는다.
+계획을 생성·조회·취소할 수 있다. 실행 어댑터가 연결될 때까지 계획 승인 명령은 제공하지 않는다.
+온프렘 앱 배포에 연결할 때는 독립 scope에서 사용할 프로세스 수를
+`CONTROL_PLANE_ONPREM_ACTORS` JSON으로 설정한다. 준비 API가 노드·데이터 대상 등록을 대신하지 않는다.
+
+기존 실행용 seed를 사용하는 온프렘 마이그레이션의 PREPARE는 **모든 대상**을 먼저 검사한다.
+참조 방식은 양쪽 `environments.<이름>.resources`에 서로 다른 대상 참조가 있어야 한다.
+DB·Redis의 직접 접속 방식은 해당 요청의 `resources`에 명시한 source/target 쌍을 사용한다.
+설정이 불완전하면 `ONPREM_TARGET_UNCONFIRMED`로 멈춘다. 앱 배포에 연결할 PLANNED 요청은 미리 만들 수 있다.
 
 ## 장애 복구와 삭제
 
 - apply/delete 도중 SSH가 끊기면 `NEEDS_RECONCILIATION`으로 두고 중복 배포를 막는다.
   연결 복구 뒤 `POST /v1/provisioning/environments/{appId}/reconcile`로 읽기 전용
   상태 확인을 수행한다. 이미 삭제가 끝났다면 `DESTROYED`로 복구한다.
+- 이미지 pull 실패 뒤 소유권·구성이 일치하고 앱 컨테이너가 하나도 없으면 `RETRYABLE`이다.
+  레지스트리 로그인을 복구하고 같은 앱 배포 ID에 `POST .../apply`를 보낸다. apply는 소유권,
+  빈 프로젝트, 앱 포트를 다시 확인한다. 부분 배포나 삭제 중인 프로젝트에는 이 재시도를 허용하지 않는다.
+- 새 데이터 준비에서 `SERVICE_PORT_IN_USE`가 나오면 대상 주소의 5432, 6379, 8333, 18888 리스너를 확인한다.
+  기존 수동 Compose 서비스가 사용 중인 주소·포트는 플랫폼이 인수할 수 없다. 서비스와 볼륨을 유지하고,
+  실제 플랫폼 준비에는 포트가 겹치지 않는 등록 대상을 사용한다.
 - 앱 검사만 실패하면 인프라 준비 증거를 유지한다. `check-app`으로 다시 검사한다.
 - `POST /v1/provisioning/environments/{appId}/destroy`는 해당 앱 컨테이너만 제거한다.
   진행 중 workflow가 연결된 앱은 제거하지 않는다. 데이터 서비스는 남긴다.

@@ -22,11 +22,27 @@ SELF_LOGICAL_PROFILE: Final = "postgres-logical-pgbouncer-v1"
 DMS_PROFILE: Final = "gcp-dms-postgres-pgbouncer-v1"
 
 
+ResourceKey = Literal["database", "redis", "object"]
+RESOURCE_KEYS: Final[dict[ResourceKind, ResourceKey]] = {
+    ResourceKind.DATABASE: "database",
+    ResourceKind.REDIS: "redis",
+    ResourceKind.OBJECT_STORAGE: "object",
+}
+
+
+class OnpremTargetUnconfirmed(ValueError):
+    """The selected direction has no unambiguous data target."""
+
+
 class Environment(Model):
     app_url: str
     traffic_pool: str
     actors: dict[str, int] = Field(min_length=1)
     """Actor id, as registered with the DB adapter, to the number of processes it runs."""
+    resources: dict[ResourceKey, str] = Field(default_factory=dict)
+    """This environment's resource refs (adapter keys). A workflow takes its source refs from its
+    source environment and its target refs from its target environment, so either direction runs
+    from the same seed."""
 
 
 class Policy(Model):
@@ -79,9 +95,14 @@ class ResourceSeed(Model):
                 raise ValueError("source is required before configuring a target")
             if self.source_ref is not None or self.target_ref is not None:
                 raise ValueError("use endpoint objects or legacy refs, not both")
-        elif self.source_ref is None or self.target_ref is None:
-            raise ValueError("source and target endpoints are required (legacy refs are accepted)")
+        elif (self.source_ref is None) != (self.target_ref is None):
+            raise ValueError("sourceRef and targetRef go together")
+        # With neither, the refs come from environments.*.resources (checked by Seed).
         return self
+
+    @property
+    def refs_from_environments(self) -> bool:
+        return self.source is None and self.source_ref is None
 
 
 class DatabaseSeed(ResourceSeed):
@@ -214,13 +235,13 @@ class Timings(Model):
     stability_window: float = 30
     stability_max_gap: float = 10
     evidence_renew_interval: float = 8
-    business_probe_interval: float = 15
+    business_probe_interval: float = 1
     business_probe_timeout: float = 25
     business_probe_max_age: float = 30
-    light_probe_rate_per_second: float = 2
-    light_bucket_seconds: float = 5
-    observation_window: float = 60
-    min_light_samples: int = 30
+    light_probe_rate_per_second: float = 5
+    light_bucket_seconds: float = 1
+    observation_window: float = 3
+    min_light_samples: int = 3
     p95_factor: float = 1.5
     p95_margin_ms: float = 50
     instance_ttl: float = 15
@@ -237,6 +258,15 @@ class Timings(Model):
     """No direct connection may be reported for this long before the proxy entry counts."""
 
 
+class SystemDeployment(Model):
+    """Explicit read access to one shared app deployment; never a wildcard owner grant."""
+
+    environment_id: str = Field(pattern=r"^env-[a-f0-9]{12}$")
+    deployment_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    owner_id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    environment: str = Field(min_length=1, max_length=64)
+
+
 class Seed(Model):
     application: str
     scope: str
@@ -245,8 +275,81 @@ class Seed(Model):
     adapters: Adapters = Field(default_factory=Adapters)
     probe: ProbeSeed
     canary_weights: list[int] = Field(default_factory=lambda: [5])
-    traffic_weights: list[int] = Field(default_factory=lambda: [25, 50, 100])
+    traffic_weights: list[int] = Field(default_factory=lambda: [50, 100])
     timings: Timings = Field(default_factory=Timings)
+    system_deployments: list[SystemDeployment] = Field(default_factory=list, max_length=32)
+
+    @model_validator(mode="after")
+    def system_deployment_identity(self) -> Self:
+        ids = [row.environment_id for row in self.system_deployments]
+        identities = [
+            (row.owner_id, row.deployment_id, row.environment) for row in self.system_deployments
+        ]
+        if len(ids) != len(set(ids)) or len(identities) != len(set(identities)):
+            raise ValueError("systemDeployments must have unique IDs and identities")
+        if any(row.environment not in self.environments for row in self.system_deployments):
+            raise ValueError("systemDeployments environment must belong to this application")
+        return self
+
+    @model_validator(mode="after")
+    def environment_refs(self) -> Self:
+        for kind in self.resources.managed():
+            resource = self.resources.of(kind)
+            key = RESOURCE_KEYS[kind]
+            if resource.source is not None:
+                continue
+            # The demo node may be registered before its data targets. Validate those at PREPARE.
+            missing = [
+                name
+                for name, env in self.environments.items()
+                if name != "onprem" and key not in env.resources
+            ]
+            if resource.refs_from_environments and missing:
+                raise ValueError(
+                    f"{key} has no sourceRef/targetRef: environments {missing} need resources.{key}"
+                )
+            if kind is ResourceKind.DATABASE and resource.catalog is not None:
+                known = resource.catalog.databases
+                unknown = [
+                    env.resources[key]
+                    for name, env in self.environments.items()
+                    if name != "onprem" and key in env.resources and env.resources[key] not in known
+                ]
+                if unknown:
+                    raise ValueError(f"database refs {unknown} are not in catalog.databases")
+        return self
+
+    def resource_seed(self, kind: ResourceKind, source_env: str, target_env: str) -> ResourceSeed:
+        """The resource as a workflow from `source_env` to `target_env` uses it.
+
+        Refs listed by both environments win over the resource's own sourceRef/targetRef.
+        Endpoint-object input is returned as it is."""
+        resource = self.resources.of(kind)
+        key = RESOURCE_KEYS[kind]
+        onprem = "onprem" in (source_env, target_env)
+        if resource.source is not None:
+            if onprem:
+                raise OnpremTargetUnconfirmed(f"provide explicit {key} endpoints for this workflow")
+            return resource
+        source = self.environments[source_env].resources.get(key)
+        target = self.environments[target_env].resources.get(key)
+        if onprem:
+            if not source or not target or source == target:
+                raise OnpremTargetUnconfirmed(
+                    f"configure distinct {key} refs in both workflow environments"
+                )
+            if (
+                kind is ResourceKind.DATABASE
+                and resource.catalog
+                and (
+                    source not in resource.catalog.databases
+                    or target not in resource.catalog.databases
+                )
+            ):
+                raise OnpremTargetUnconfirmed("register both database refs in the adapter catalog")
+        if source is None or target is None:
+            return resource
+        return resource.model_copy(update={"source_ref": source, "target_ref": target})
 
     @model_validator(mode="after")
     def unique_actors(self) -> Self:

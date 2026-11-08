@@ -1,4 +1,4 @@
-"""Read-only, scoped host metrics for the application console."""
+"""Deployment-owned container metrics. No application-name or host-wide fallback."""
 
 from __future__ import annotations
 
@@ -8,10 +8,11 @@ import math
 from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from pydantic import BeforeValidator
 
 from control_plane.api.dependencies import Context, CurrentSession
+from control_plane.deployment.api import call, org_id
 from control_plane.errors import ApiError
 from control_plane.telemetry_query import read_backend
 
@@ -20,52 +21,174 @@ Category = Literal["cpu", "memory", "disk", "network"]
 Window = Annotated[Literal[15, 60, 360], BeforeValidator(int)]
 
 
-def scope(context: Context, application_id: str, environment: str) -> str:
-    if application_id != context.seed.application or environment not in context.seed.environments:
-        raise ApiError(404, "NOT_FOUND", "unknown application or environment")
+def shared_records(context: Context) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": "shared:" + row.environment_id,
+            "org_id": row.owner_id,
+            "cloud": row.environment,
+            "deployment_id": row.deployment_id,
+            "status": "REPORTING",
+            "access": "shared",
+        }
+        for row in context.seed.system_deployments
+    ]
+
+
+def labels_for(application: str, record: dict[str, Any]) -> str:
     return (
-        f"application_id={json.dumps(application_id)},"
-        f'deployment_environment_name={json.dumps(environment)},service_name="foxtrot-app-host"'
+        f"application_id={json.dumps(application)},"
+        f"foxtrot_owner_id={json.dumps(record['org_id'])},"
+        f"deployment_id={json.dumps(record['deployment_id'])},"
+        f"deployment_environment_name={json.dumps(record['cloud'])},"
+        'service_name="foxtrot-app-runtime"'
     )
 
 
-def queries(labels: str, host: str, category: Category) -> dict[str, tuple[str, str]]:
-    labels += f",host_name={json.dumps(host)}"
+@router.get("/deployments")
+async def live_deployments(
+    application_id: str,
+    context: Context,
+    request: Request,
+    session: CurrentSession,
+    include_inactive: bool = False,
+) -> dict[str, Any]:
+    if application_id != context.seed.application:
+        raise ApiError(404, "NOT_FOUND", "unknown application")
+    owner = org_id(str(session.user.id), application_id)
+    engine = getattr(request.app.state, "deployment_service", None)
+    records = shared_records(context)
+    if engine is not None:
+        records += [
+            {**row, "access": "personal"}
+            for row in await call(engine.store.environments)
+            if row["org_id"] == owner and row["status"] not in {"DESTROYING", "DESTROYED"}
+        ]
+    if not records:
+        return {"state": "OK" if engine is not None else "NOT_CONFIGURED", "environments": []}
+    # Every selector includes the full registered identity. Sharing one deployment
+    # does not grant access to other deployments under the same org or app name.
+    selectors = [
+        "(timestamp(foxtrot_runtime_collection{"
+        + labels_for(application_id, row)
+        + "}) > time() - 30)"
+        for row in records
+    ]
+    async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
+        state, payload = await read_backend(
+            http,
+            context.settings.prometheus_url,
+            "/api/v1/query",
+            {
+                "query": "max by (foxtrot_owner_id, deployment_id, deployment_environment_name) ("
+                + " or ".join(selectors)
+                + ")"
+            },
+        )
 
-    def fresh(metric: str, extra: str = "") -> str:
-        selector = f"{metric}{{{labels}{extra}}}"
+    def result(state: str, live: set[tuple[str, str, str]]) -> dict[str, Any]:
+        return {
+            "state": state,
+            "environments": [
+                {
+                    "environmentId": row["id"],
+                    "deploymentId": row["deployment_id"],
+                    "cloud": row["cloud"],
+                    "status": row["status"],
+                    "access": row["access"],
+                    **(
+                        {
+                            "collection": "REPORTING"
+                            if (row["org_id"], row["deployment_id"], row["cloud"]) in live
+                            else "NOT_REPORTING"
+                            if state == "OK"
+                            else "UNKNOWN"
+                        }
+                        if include_inactive
+                        else {}
+                    ),
+                }
+                for row in records
+                if include_inactive or (row["org_id"], row["deployment_id"], row["cloud"]) in live
+            ],
+        }
+
+    if state != "OK":
+        return result(state, set())
+    try:
+        if payload["status"] != "success" or payload["data"]["resultType"] != "vector":
+            raise ValueError("invalid backend result")
+        live = set()
+        for row in payload["data"]["result"]:
+            observed = float(row["value"][1])
+            if (
+                not math.isfinite(observed)
+                or not 0 <= context.clock.now().timestamp() - observed < 30
+            ):
+                continue
+            metric = row["metric"]
+            live.add(
+                (
+                    metric["foxtrot_owner_id"],
+                    metric["deployment_id"],
+                    metric["deployment_environment_name"],
+                )
+            )
+    except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
+        return result("UNAVAILABLE", set())
+    return result("OK", live)
+
+
+async def scope(
+    context: Context, request: Request, session: Any, application_id: str, deployment: str
+) -> str:
+    if application_id != context.seed.application:
+        raise ApiError(404, "NOT_FOUND", "unknown application")
+    selected = next((row for row in shared_records(context) if row["id"] == deployment), None)
+    if selected is None:
+        engine = getattr(request.app.state, "deployment_service", None)
+        if engine is None or deployment.startswith("shared:"):
+            raise ApiError(404, "NOT_FOUND", "deployment not found")
+        selected = await call(engine.store.environment, deployment)
+        owner = org_id(str(session.user.id), application_id)
+        if selected is None or selected["org_id"] != owner:
+            raise ApiError(404, "NOT_FOUND", "deployment not found")
+    return labels_for(application_id, selected)
+
+
+def queries(labels: str, instance: str, category: Category) -> dict[str, tuple[str, str]]:
+    labels += f",service_instance_id={json.dumps(instance)}"
+
+    def fresh(metric: str) -> str:
+        selector = f"{metric}{{{labels}}}"
         return f"({selector} and (timestamp({selector}) > time() - 30))"
 
+    def value(name: str) -> str:
+        return f"max({fresh('foxtrot_runtime_' + name)})"
+
+    def rate(name: str) -> str:
+        selector = f"foxtrot_runtime_{name}_total{{{labels}}}"
+        return f"max(rate({selector}[2m]) and (timestamp({selector}) > time() - 30))"
+
     if category == "cpu":
-        metric = "system_cpu_time_seconds_total{" + labels + ',state="idle"}'
         return {
-            "cpu": (
-                f"100 * (1 - avg(rate({metric}[2m]) and (timestamp({metric}) > time() - 30)))",
-                "%",
-            )
+            "cpu": (f"100 * ({rate('cpu_seconds')}) / ({value('cpu_limit')})", "%"),
+            "cpu_cores": (rate("cpu_seconds"), "cores"),
         }
     if category == "memory":
-        available = f"max({fresh('system_linux_memory_available_bytes')})"
-        limit = f"max({fresh('system_memory_limit_bytes')})"
         return {
-            "memory": (f"100 * (1 - ({available}) / ({limit}))", "%"),
-            "memory_bytes": (f"({limit}) - ({available})", "By"),
+            "memory": (f"100 * ({value('memory_bytes')}) / ({value('memory_limit')})", "%"),
+            "memory_bytes": (value("memory_bytes"), "By"),
         }
     if category == "disk":
-        used = "sum(" + fresh("system_filesystem_usage_bytes", ',state="used",mountpoint="/"') + ")"
-        total = "sum(" + fresh("system_filesystem_usage_bytes", ',mountpoint="/"') + ")"
-        result = {"disk_usage": (f"100 * ({used}) / ({total})", "%")}
-        metric, directions = "system_disk_io_bytes_total", ("read", "write")
-    else:
-        result = {}
-        metric, directions = "system_network_io_bytes_total", ("receive", "transmit")
-    for direction in directions:
-        selector = f'{metric}{{{labels},direction="{direction}"}}'
-        result[f"{category}_{direction}"] = (
-            f"sum(rate({selector}[2m]) and (timestamp({selector}) > time() - 30))",
-            "By/s",
-        )
-    return result
+        return {
+            "disk_read": (rate("disk_read"), "By/s"),
+            "disk_write": (rate("disk_write"), "By/s"),
+        }
+    return {
+        "network_receive": (rate("network_receive"), "By/s"),
+        "network_transmit": (rate("network_transmit"), "By/s"),
+    }
 
 
 def points(payload: dict[str, Any], start: int, end: int, step: int) -> list[list[float | None]]:
@@ -88,16 +211,17 @@ def points(payload: dict[str, Any], start: int, end: int, step: int) -> list[lis
 async def series(
     application_id: str,
     context: Context,
-    _: CurrentSession,
-    environment: str = Query(max_length=64),
-    host: str = Query(min_length=1, max_length=128),
+    request: Request,
+    session: CurrentSession,
+    deployment: str = Query(min_length=1, max_length=128),
+    instance: str = Query(min_length=1, max_length=128),
     category: Category = "cpu",
     minutes: Window = 60,
 ) -> dict[str, Any]:
-    labels = scope(context, application_id, environment)
+    labels = await scope(context, request, session, application_id, deployment)
     end = int(context.clock.now().timestamp())
     start, step = end - minutes * 60, max(10, minutes // 3)
-    definitions = queries(labels, host, category)
+    definitions = queries(labels, instance, category)
     async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
         responses = await asyncio.gather(
             *[
@@ -124,21 +248,25 @@ async def series(
     return {"from": start, "to": end, "step": step, "series": rows}
 
 
-@router.get("/hosts")
-async def hosts(
+@router.get("/instances")
+async def instances(
     application_id: str,
     context: Context,
-    _: CurrentSession,
-    environment: str = Query(max_length=64),
+    request: Request,
+    session: CurrentSession,
+    deployment: str = Query(min_length=1, max_length=128),
 ) -> dict[str, Any]:
-    labels = scope(context, application_id, environment)
-    selector = f"system_cpu_time_seconds_total{{{labels}}}"
+    labels = await scope(context, request, session, application_id, deployment)
+    selector = f"foxtrot_runtime_collection{{{labels}}}"
     async with httpx.AsyncClient(timeout=3, follow_redirects=False) as http:
         state, payload = await read_backend(
             http,
             context.settings.prometheus_url,
             "/api/v1/query",
-            {"query": f"max by (host_name) (timestamp({selector}))"},
+            {
+                "query": "max by (service_instance_id, app_role, network_scope) "
+                f"(timestamp({selector}))"
+            },
         )
     rows = []
     try:
@@ -148,17 +276,24 @@ async def hosts(
                 or payload.get("data", {}).get("resultType") != "vector"
             ):
                 raise ValueError("invalid backend result")
-            for row in payload["data"]["result"][:64]:
-                name = row["metric"].get("host_name")
+            ordered = sorted(
+                payload["data"]["result"], key=lambda row: float(row["value"][1]), reverse=True
+            )
+            for row in ordered[:64]:
+                name = row["metric"].get("service_instance_id")
                 at = float(row["value"][1])
                 if isinstance(name, str) and 0 < len(name) <= 128 and math.isfinite(at):
                     rows.append(
                         {
-                            "name": name,
+                            "id": name,
+                            "role": str(row["metric"].get("app_role", "app"))[:128],
+                            "networkScope": "app-instance"
+                            if row["metric"].get("network_scope") == "app-instance"
+                            else "container",
                             "lastSeen": at,
                             "stale": context.clock.now().timestamp() - at > 30,
                         }
                     )
     except (KeyError, ValueError, TypeError, AttributeError, OverflowError):
-        return {"state": "UNAVAILABLE", "hosts": []}
-    return {"state": state, "hosts": sorted(rows, key=lambda r: str(r["name"]))}
+        return {"state": "UNAVAILABLE", "instances": []}
+    return {"state": state, "instances": sorted(rows, key=lambda row: str(row["id"]))}

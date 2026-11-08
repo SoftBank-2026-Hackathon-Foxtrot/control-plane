@@ -121,6 +121,8 @@ async def ingest(request: Request, context: Context) -> Response:
                         if workflow.finished_at
                         else None,
                         source="OTEL",
+                        trace_id=record.trace_id.hex() if len(record.trace_id) == 16 else None,
+                        span_id=record.span_id.hex() if len(record.span_id) == 8 else None,
                     )
                 except (ValueError, KeyError, TypeError, OverflowError, AttributeError):
                     rejected += 1

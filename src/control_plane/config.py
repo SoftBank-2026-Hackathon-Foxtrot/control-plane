@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     seed_path: str = "config/seed.yaml"
+    onprem_planning: bool = False
+    onprem_actors: dict[str, int] = Field(default_factory=dict)
 
     table_name: str = "foxtrot-control-plane"
     region: str = "ap-northeast-2"

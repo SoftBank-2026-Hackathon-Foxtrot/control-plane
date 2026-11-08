@@ -93,12 +93,8 @@ def executor(tmp_path, config):
 
 def test_render_checks_owner_capacity_and_image_before_queueing(node_config):
     assert rendered(node_config)["org_id"] == "testorg"
-    assert (
-        rendered(node_config, app={"image": "ghcr.io/foxtrot/app:v1", "workerCount": 0})["app"][
-            "worker_count"
-        ]
-        == 0
-    )
+    with pytest.raises(spec.RequestError, match="worker_count"):
+        rendered(node_config, app={"image": "ghcr.io/foxtrot/app:v1", "workerCount": 0})
     for extra in (
         {"org": {"id": "other"}},
         {"target": {"nodeId": "pc", "dockerHost": "ssh://evil"}},
@@ -260,7 +256,11 @@ def test_inspection_rejects_missing_workers_and_wrong_images():
         [api], {"api": {"image": "app:v1"}, "worker-1": {"image": "app:v1"}}
     )["ready"]
     assert not node_remote.inspect([api], {"api": {"image": "app:v2"}})["ready"]
-    assert node_remote.inspect([api], {"api": {"image": "app:v1"}})["ready"]
+    assert not node_remote.inspect([api], {"api": {"image": "app:v1"}})["ready"]
+    worker = copy.deepcopy(api)
+    worker["Config"]["Labels"]["com.docker.compose.service"] = "worker-1"
+    services = {"api": {"image": "app:v1"}, "worker-1": {"image": "app:v1"}}
+    assert node_remote.inspect([api, worker], services)["ready"]
 
 
 def test_shared_docker_project_cannot_delete_another_owners_container():
@@ -270,6 +270,45 @@ def test_shared_docker_project_cannot_delete_another_owners_container():
         pytest.raises(node_remote.NodeFailure, match="UNOWNED"),
     ):
         node_remote.checked_records("foxtrot-env-123456789abc", "env-123456789abc")
+
+
+def test_apply_retry_rechecks_ownership_and_empty_project(node_config, tmp_path):
+    runner = executor(tmp_path, node_config)
+    spec_ = rendered(node_config)
+    payload = runner.payload("env-123456789abc", spec_, runner.resolve(spec_), "apply")
+    with tempfile.TemporaryDirectory(dir=Path.cwd()) as folder:
+        payload["runtimeRoot"] = folder
+        with (
+            patch.object(node_remote, "records", return_value=[]) as records,
+            patch.object(node_remote, "docker") as docker,
+        ):
+
+            def fail_pull(*args):
+                if args[-1] == "pull":
+                    raise node_remote.NodeFailure("DOCKER_OPERATION_FAILED")
+                return ""
+
+            docker.side_effect = fail_pull
+            with pytest.raises(node_remote.NodeFailure, match="DOCKER_OPERATION_FAILED"):
+                node_remote.handle(payload)
+            evidence = node_remote.handle({**payload, "action": "inspect"})
+            assert evidence["ownedEmpty"] and not evidence["ready"]
+            retry = {**payload, "retryOwnedEmpty": True}
+            occupied = {"Config": {"Labels": {"foxtrot.deployment": payload["environmentId"]}}}
+            records.return_value = [occupied]
+            docker.reset_mock()
+            with pytest.raises(node_remote.NodeFailure, match="REQUIRES_EMPTY"):
+                node_remote.handle(retry)
+            assert not any(
+                "pull" in call.args or "up" in call.args for call in docker.call_args_list
+            )
+            records.return_value = []
+            with (
+                patch.object(node_remote, "check_address"),
+                patch.object(node_remote, "docker", return_value="") as ok,
+            ):
+                node_remote.handle(retry)
+            assert any("up" in call.args for call in ok.call_args_list)
 
 
 @pytest.mark.parametrize("connection_result", [errno.ECONNREFUSED, 0, errno.ETIMEDOUT])
@@ -364,3 +403,26 @@ def test_node_requires_pinned_ssh_identity_and_private_key(node_config):
     Path(nodes["pc"]["sshKeyFile"]).chmod(0o644)
     with pytest.raises(spec.RequestError, match="private"):
         resolve(nodes, value)
+
+
+def test_monitoring_is_deployed_on_registered_host(tmp_path, node_config, monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.internal:4318")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=Bearer%20test-token")
+    runner = executor(tmp_path, node_config)
+    runner.telemetry["applicationId"] = "chiikawa"
+    document = rendered(node_config)
+    node = runner.resolve(document)
+    services = runner.compose("env-123456789abc", document, node)["services"]
+    assert "otel-system" not in services
+    assert all(service.get("network_mode") != "host" for service in services.values())
+    assert services["api"]["environment"]["OTEL_APPLICATION_ID"] == "chiikawa"
+    assert services["api"]["environment"]["OTEL_SYSTEM_METRICS"] == "container"
+    assert services["api"]["environment"]["OTEL_OWNER_ID"] == "testorg"
+    assert services["api"]["environment"]["OTEL_DEPLOYMENT_ID"] == document["deployment_id"]
+    assert services["worker-1"]["environment"]["OTEL_APP_ROLE"] == "worker"
+    document["app"]["env"]["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://other"
+    with pytest.raises(spec.RequestError, match="OTEL"):
+        runner.compose("env-123456789abc", document, node)
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_HEADERS")
+    with pytest.raises(spec.RequestError, match="headers"):
+        runner.resolve(rendered(node_config))

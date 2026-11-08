@@ -14,4 +14,9 @@ otlp:
     - foxtrot.deployment.id
     - foxtrot.workload.kind
     - host.name
+    - measurement.scope
+    - foxtrot.owner.id
+    - deployment.id
+    - app.role
+    - network.scope
   translation_strategy: UnderscoreEscapingWithSuffixes

@@ -15,6 +15,7 @@ from control_plane.main import create_api
 from control_plane.seed import ATOMIC_LOGICAL_PROFILE, MANAGED_LOGICAL_PROFILE, SELF_LOGICAL_PROFILE
 from tests.conftest import SEED, World
 from tests.fakes import Fault
+from tests.test_environment_refs import with_onprem
 
 
 def fixed_seed() -> dict[str, Any]:
@@ -48,6 +49,33 @@ async def initialized() -> World:
     ready = await world.workflows.bindings.initialize()
     assert all(binding["status"] == "ACTIVE" for binding in ready.values())
     return world
+
+
+@pytest.mark.parametrize("explicit", [True, False])
+async def test_onprem_requires_the_direct_pairs_from_this_request(explicit: bool) -> None:
+    raw = with_onprem(fixed_seed(), {"object": "resource:onprem-receipts"})
+    raw["environments"]["aws"]["resources"] = {"object": "resource:aws-receipts"}
+    world = World(seed=raw)
+    await world.workflows.bindings.initialize()
+    await world.workflows.bindings.initialize()
+    pairs = {}
+    for kind in (ResourceKind.DATABASE, ResourceKind.REDIS):
+        seed = world.seed.resources.of(kind)
+        assert seed.source and seed.target
+        pairs[kind] = EndpointPair(
+            source=seed.source, target=seed.target.model_copy(update={"host": "onprem-node"})
+        )
+    workflow = await world.workflows.create(
+        source_env="aws", target_env="onprem", actor="tester", resources=pairs if explicit else None
+    )
+    if explicit:
+        await world.at_stage(workflow.id, 1)
+        for kind in pairs:
+            assert world.adapters[kind].only.plan["target"]["host"] == "onprem-node"
+    else:
+        stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
+        assert stopped.halt and stopped.halt.code == "ONPREM_TARGET_UNCONFIRMED"
+        assert not any(adapter.migrations for adapter in world.adapters.values())
 
 
 async def test_registration_required_and_fixed_proxy_returned() -> None:

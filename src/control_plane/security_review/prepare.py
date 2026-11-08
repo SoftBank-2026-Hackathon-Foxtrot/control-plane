@@ -20,6 +20,8 @@ def main() -> None:
     parser.add_argument("--location", default="ASIA-NORTHEAST3")
     args = parser.parse_args()
     cfg = ReviewConfig.model_validate_json(Path(args.config).read_text())
+    if cfg.read_only:
+        parser.error("read-only profiles cannot prepare or reset a demo bucket")
     if cfg.mode != "cloud" or not cfg.extra_bucket.startswith("foxtrot-security-demo-"):
         parser.error("only a cloud profile with a foxtrot-security-demo- bucket is supported")
     provider = CloudProvider(cfg, args.region)
