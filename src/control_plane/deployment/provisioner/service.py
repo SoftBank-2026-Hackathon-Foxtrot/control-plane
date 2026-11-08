@@ -304,8 +304,9 @@ class Service:
             "status": "DESTROYING",
         }
 
-    @staticmethod
-    def _scope_app_metrics(req: dict, tfvars: dict) -> None:
+    def _scope_app_metrics(self, req: dict, tfvars: dict) -> None:
+        if self.config.get("appTelemetry"):
+            return  # spec.render already assigned the platform-owned telemetry identity.
         for field in ("env", "apiEnv", "workerEnv", "secretEnv"):
             spec.require(
                 "OTEL_RESOURCE_ATTRIBUTES" not in req["app"].get(field, {}),
@@ -320,6 +321,7 @@ class Service:
             "application.id": application,
             "deployment.environment.name": req["cloud"],
             "foxtrot.owner.id": req["org"]["id"],
+            "deployment.id": tfvars["deployment_id"],
             "foxtrot.deployment.id": tfvars["deployment_id"],
             "foxtrot.workload.kind": "USER_APPLICATION",
         }

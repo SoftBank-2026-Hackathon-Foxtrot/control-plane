@@ -36,7 +36,14 @@ def configure_app(app, config, cloud, *, owner, deployment):
         "OTEL_RESOURCE_ATTRIBUTES": "application.id="
         + application
         + ",deployment.environment.name="
-        + cloud,
+        + cloud
+        + ",foxtrot.owner.id="
+        + owner
+        + ",deployment.id="
+        + deployment
+        + ",foxtrot.deployment.id="
+        + deployment
+        + ",foxtrot.workload.kind=USER_APPLICATION",
     }
     for field in ("env", "api_env", "worker_env", "secret_env"):
         if any(key.startswith("OTEL_") for key in app.get(field, {})):

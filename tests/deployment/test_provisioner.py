@@ -306,7 +306,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-def test_app_exporter_settings_are_cloud_scoped_secret_references():
+def test_app_exporter_settings_are_cloud_scoped_secret_references(tmp_path):
     import copy
 
     import pytest
@@ -332,10 +332,38 @@ def test_app_exporter_settings_are_cloud_scoped_secret_references():
         assert app["env"]["OTEL_OWNER_ID"] == "testorg"
         assert app["env"]["OTEL_DEPLOYMENT_ID"].endswith(cloud + "-abcd")
         assert f"deployment.environment.name={cloud}" in app["env"]["OTEL_RESOURCE_ATTRIBUTES"]
+        attributes = dict(
+            item.split("=", 1) for item in app["env"]["OTEL_RESOURCE_ATTRIBUTES"].split(",")
+        )
+        assert attributes["foxtrot.owner.id"] == "testorg"
+        assert attributes["deployment.id"] == app["env"]["OTEL_DEPLOYMENT_ID"]
         assert (
             app["secret_env"]["OTEL_EXPORTER_OTLP_HEADERS"]
             == config["appTelemetry"]["headersSecrets"][cloud]
         )
+        engine = Service(
+            Store(tmp_path / f"{cloud}.db"),
+            FakeTerraform(tmp_path),
+            CATALOG,
+            config,
+            ReadyChecker(),
+        )
+        _, created = engine.create(
+            {"org": {"id": "testorg", "name": "different-app-name"}, "cloud": cloud}
+        )
+        while engine.run_next():
+            pass
+        saved = engine.store.environment(created["environmentId"])
+        for rendered in (
+            saved["tfvars"],
+            engine.validate_update(saved["id"], {"app": {"cpu": 1, "memoryMiB": 2048}})[1],
+        ):
+            env = rendered["app"]["env"]
+            attrs = dict(item.split("=", 1) for item in env["OTEL_RESOURCE_ATTRIBUTES"].split(","))
+            assert attrs["application.id"] == env["OTEL_APPLICATION_ID"] == "goods"
+            assert attrs["deployment.id"] == env["OTEL_DEPLOYMENT_ID"] == saved["deployment_id"]
+            assert attrs["foxtrot.owner.id"] == env["OTEL_OWNER_ID"] == "testorg"
+        engine.store.db.close()
         req["app"]["apiEnv"] = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://other"}
         with pytest.raises(spec.RequestError, match="OTEL"):
             spec.render(req, CATALOG, config, "abcd", TODAY)
