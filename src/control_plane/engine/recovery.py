@@ -30,8 +30,11 @@ Step = Callable[[StageContext, ResourceKind, dict[str, Any]], Awaitable[Outcome]
 
 CANCELLABLE_EARLY = frozenset({"CREATED", "PREPARED", "SYNCING", "READY", "QUIESCED", "FAILED"})
 """Lifecycles in which nothing has switched, so CANCEL can end the plan if the adapter allows it."""
-LEFT_AS_THEY_ARE = frozenset({"ACTIVE", "RESTORED", "CANCELLED", "COMPLETED"})
-"""A plan here runs on one side, alone. Aborting the workflow does not need to touch it."""
+LEFT_AS_THEY_ARE = frozenset({"CANCELLED", "COMPLETED"})
+"""A plan here is closed. Aborting the workflow does not need to touch it."""
+SWITCHED_OPEN = frozenset({"SWITCHED", "ACTIVE"})
+"""Moved to the target and still open. Aborting would leave it running beside the next workflow
+(an object plan keeps copying back to the source), so it must be rolled back first."""
 
 
 class Rollback:
@@ -307,6 +310,20 @@ class Abort:
                     return outcome
                 continue
             if view.lifecycle in LEFT_AS_THEY_ARE:
+                continue
+            if view.lifecycle == "RESTORED":
+                # Rolled back to the source but still open: close it so no copy keeps running.
+                outcome = await self.runner.run(
+                    ctx,
+                    Command(
+                        kind, "FINALIZE", slot="ABORT_FINALIZE", expected=expected_after("FINALIZE")
+                    ),
+                )
+                if not isinstance(outcome, Passed):
+                    return outcome
+                continue
+            if view.lifecycle in SWITCHED_OPEN:
+                unsafe.append(f"{kind.value}: {view.lifecycle} on the target, roll it back first")
                 continue
             cancellable = view.lifecycle in CANCELLABLE_EARLY and ("CANCEL" in view.allowed_actions)
             if record is None and not cancellable:

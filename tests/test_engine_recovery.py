@@ -265,12 +265,32 @@ async def test_abort_still_finishes_if_the_cancelled_database_cannot_be_cleaned_
     assert await world.repo.active_workflow_id() is None
 
 
-async def test_abort_leaves_a_switched_resource_where_it_is(world: World) -> None:
+async def test_abort_refuses_while_a_resource_is_on_its_target(world: World) -> None:
+    """An open plan on the target would keep running beside the next workflow."""
     workflow_id = await stop_after_object_moved(world)
     await world.command(workflow_id, "ABORT")
-    await world.until(workflow_id, WorkflowStatus.ABORTED)
+    stopped = await world.until(workflow_id, WorkflowStatus.HALTED)
+
+    assert stopped.halt is not None and stopped.halt.code == "ABORT_NOT_SAFE"
+    assert any("OBJECT_STORAGE" in blocker for blocker in stopped.halt.blockers)
     assert world.object.only.lifecycle == "ACTIVE"
+    assert await world.repo.active_workflow_id() == workflow_id
+
+
+async def test_abort_after_a_rollback_closes_every_plan(world: World) -> None:
+    workflow_id = await stop_after_object_moved(world)
+    await world.command(workflow_id, "ROLLBACK_RESOURCE", resource=ResourceKind.OBJECT_STORAGE)
+    await world.until(workflow_id, WorkflowStatus.HALTED)
+    assert world.object.only.lifecycle == "RESTORED"
+
+    await world.command(workflow_id, "ABORT")
+    await world.until(workflow_id, WorkflowStatus.ABORTED)
+
+    # RESTORED is finalized, so no reverse copy outlives the workflow.
+    assert world.object.only.lifecycle == "COMPLETED"
+    assert world.object.executed["FINALIZE"] == 1
     assert world.db.only.lifecycle == "COMPLETED"
+    assert await world.repo.active_workflow_id() is None
 
 
 async def test_abort_refuses_to_walk_away_from_a_paused_database(world: World) -> None:
@@ -296,20 +316,22 @@ async def test_abort_returns_users_to_the_source_if_the_data_is_there(world: Wor
     await world.at_stage(workflow.id, REDIS_STAGE)
     await world.command(workflow.id, "HALT")
     assert world.traffic.current == 5
+    await world.command(workflow.id, "ROLLBACK_RESOURCE", resource=ResourceKind.OBJECT_STORAGE)
+    await world.until(workflow.id, WorkflowStatus.HALTED)
     await world.command(workflow.id, "ABORT")
     await world.until(workflow.id, WorkflowStatus.ABORTED)
     assert world.traffic.current == 0
 
 
-async def test_abort_leaves_traffic_if_the_data_moved(world: World) -> None:
+async def test_abort_refuses_while_redis_has_moved(world: World) -> None:
     workflow = await world.start()
     await world.at_stage(workflow.id, DB_STAGE)  # Redis has moved
-    assert world.traffic.current == 5
     await world.command(workflow.id, "HALT")
     await world.command(workflow.id, "ABORT")
-    await world.until(workflow.id, WorkflowStatus.ABORTED)
+    stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
+    assert stopped.halt is not None and stopped.halt.code == "ABORT_NOT_SAFE"
+    assert any("REDIS" in blocker for blocker in stopped.halt.blockers)
     assert world.traffic.current == 5
-    assert "TRAFFIC_LEFT_IN_PLACE" in await world.event_types(workflow.id)
 
 
 async def test_a_failed_rollback_can_be_tried_again(world: World) -> None:
