@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from control_plane.ai.allocation import allocation
+from control_plane.ai.inventory import DeploymentInventory
 from control_plane.api.dependencies import ApiContext
 from control_plane.deployment.api import APP_TEMPLATE
 from control_plane.deployment.paths import iac_root
@@ -39,8 +40,21 @@ class DeploymentScope:
 class InfrastructureContext:
     """Applied application deployments shared by the project. No platform seed or workflows."""
 
-    def __init__(self, context: ApiContext, deployment: Any = None) -> None:
+    def __init__(
+        self,
+        context: ApiContext,
+        deployment: Any = None,
+        *,
+        inventory: DeploymentInventory | None = None,
+    ) -> None:
         self.context, self.deployment = context, deployment
+        self.inventory = inventory
+
+    @property
+    def store(self) -> DeploymentInventory | None:
+        if self.inventory is not None:
+            return self.inventory
+        return cast(DeploymentInventory, self.deployment.store) if self.deployment else None
 
     def application(self, application: str | None) -> str:
         if application and application != self.context.seed.application:
@@ -69,11 +83,8 @@ class InfrastructureContext:
         )
 
     async def visible(self, identifier: str, *, ready: bool = False) -> DeploymentScope:
-        record = (
-            await asyncio.to_thread(self.deployment.store.environment, identifier)
-            if self.deployment
-            else None
-        )
+        store = self.store
+        record = await asyncio.to_thread(store.environment, identifier) if store else None
         scope = self._scope(record)
         if scope is None:
             raise ApiError(404, "NOT_FOUND", "deployed application not found")
@@ -86,9 +97,10 @@ class InfrastructureContext:
         return scope
 
     async def deployments(self) -> list[DeploymentScope]:
-        if not self.deployment:
+        store = self.store
+        if store is None:
             return []
-        records = await asyncio.to_thread(self.deployment.store.environments)
+        records = await asyncio.to_thread(store.environments)
         return [scope for record in records if (scope := self._scope(record)) is not None]
 
     @staticmethod

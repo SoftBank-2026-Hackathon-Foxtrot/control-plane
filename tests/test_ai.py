@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from control_plane.ai.allocation import allocation
 from control_plane.ai.context import DATA_SCOPE
+from control_plane.ai.inventory import SqliteDeploymentInventory
 from control_plane.ai.model import OpenAIModel, Task
 from control_plane.ai.native_metrics import summarize
 from control_plane.ai.schemas import AnalysisDraft, AnalysisRequest, ChatDraft, RecommendationDraft
@@ -24,6 +25,7 @@ from control_plane.deployment.provisioner.spec import RequestError
 from control_plane.deployment.provisioner.store import Store
 from control_plane.deployment.provisioner.terraform import TerraformError
 from control_plane.errors import ApiError
+from control_plane.main import create_api
 from tests.deployment.test_provisioner import CATALOG, CONFIG, FakeTerraform, ReadyChecker
 from tests.test_api import Console
 from tests.test_api import console as console
@@ -248,6 +250,74 @@ async def test_no_deployments_does_not_fall_back_to_shared_configuration(
     assert (await post(console, "chat", {"message": "내 앱 알려줘"})).status_code == 200
     assert model.calls[-1][1]["sources"][0]["data"]["deploymentCount"] == 0
     assert len(model.calls[-1][1]["sources"]) == 1
+
+
+async def test_read_only_inventory_supplies_ai_without_a_deployment_executor(
+    console: Console, model: FakeModel, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "p.db"
+    before = database.read_bytes()
+    monkeypatch.setenv("CONTROL_PLANE_AI_DEPLOYMENT_INVENTORY_PATH", str(database))
+    await console.login()
+    platform = console.world.platform
+    platform.ai_service = None
+    app = create_api(platform, run_loops=False)
+    app.state.ai_service.model = model
+    assert platform.deployment_service is None
+    assert app.state.deployment_service is None
+    assert app.state.ai_service.infra.deployment is None
+    assert isinstance(app.state.ai_service.infra.store, SqliteDeploymentInventory)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="https://platform.test",
+        cookies=console.http.cookies,
+    ) as client:
+        response = await client.get("/v1/ai/deployments")
+        assert response.status_code == 200, response.text
+        deployments = response.json()["deployments"]
+        assert {item["environment"] for item in deployments} == {"aws", "gcp"}
+        chat = await client.post(
+            "/v1/ai/chat",
+            json={"message": "배포 사양 알려줘", "deploymentId": source_id(console)},
+            headers=console.change_headers(),
+        )
+        assert chat.status_code == 200, chat.text
+        source = model.calls[-1][1]["sources"][1]
+        assert source["data"]["environmentId"] == source_id(console)
+        analysis = await client.post(
+            "/v1/ai/analyses",
+            json=analysis_body(console),
+            headers=console.change_headers(),
+        )
+        assert analysis.status_code == 200, analysis.text
+        assert analysis.json()["status"] == "INSUFFICIENT_DATA"
+    assert database.read_bytes() == before
+
+
+def test_read_only_inventory_never_creates_a_missing_database(tmp_path: Path) -> None:
+    path = tmp_path / "missing.db"
+    with pytest.raises(ApiError) as error:
+        SqliteDeploymentInventory(path).environments()
+    assert error.value.status == 503
+    assert error.value.code == "DEPLOYMENT_INVENTORY_UNAVAILABLE"
+    assert not path.exists()
+
+
+@pytest.mark.parametrize("snapshot", ["invalid-json", "[]"])
+async def test_invalid_inventory_returns_an_error_instead_of_an_empty_list(
+    console: Console, model: FakeModel, tmp_path: Path, snapshot: str
+) -> None:
+    engine = console.app.state.ai_service.infra.deployment
+    engine.store.db.execute(
+        "UPDATE environments SET applied_snapshot=? WHERE id=?", (snapshot, source_id(console))
+    )
+    console.app.state.ai_service.infra.inventory = SqliteDeploymentInventory(tmp_path / "p.db")
+    await console.login()
+    response = await console.http.get("/v1/ai/deployments")
+    assert response.status_code == 503
+    assert response.json()["code"] == "DEPLOYMENT_INVENTORY_UNAVAILABLE"
+    assert str(tmp_path) not in response.text
 
 
 async def test_auth_csrf_idempotency_required(console: Console, model: FakeModel) -> None:
