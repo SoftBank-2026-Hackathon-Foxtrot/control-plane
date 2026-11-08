@@ -8,7 +8,9 @@ from datetime import timedelta
 from typing import Any
 
 from control_plane.clock import Clock
+from control_plane.domain.models import ResourceKind
 from control_plane.errors import ApiError
+from control_plane.store.repository import Repository
 from control_plane.store.table import Table, VersionConflict
 
 from .models import (
@@ -87,6 +89,10 @@ class ReviewService:
         if visible["phase"] in BUSY | {"error", "applied"}:
             visible["checks"] = [dict(check, status="unknown") for check in state["checks"]]
             visible["appReady"] = None
+            visible.pop("accessProbe", None)
+            visible.pop("copyContext", None)
+        visible["probeConfigured"] = cfg.probes is not None
+        visible["copyPrincipal"] = cfg.probes.copy_email if cfg.probes else None
         return visible
 
     async def save(self, state: dict[str, Any]) -> None:
@@ -166,13 +172,46 @@ class ReviewService:
             verifiedAt=None,
             appReady=await self.probe(),
             plan=None,
+            copyContext=await self.copy_context(),
         )
+        if self.config.probes:
+            state["accessProbe"] = await self.access_probe()
+
+    async def access_probe(self) -> dict[str, str]:
+        return await asyncio.to_thread(self.provider.probe_access)
+
+    async def copy_context(self) -> dict[str, Any] | None:
+        repo = Repository(self.table)
+        workflow_id = await repo.active_workflow_id()
+        if not workflow_id:
+            return None
+        workflow = await repo.workflow(workflow_id)
+        if not workflow:
+            raise ApiError(409, "WORKFLOW_CHANGED", "마이그레이션 상태를 다시 조회하세요.")
+        if workflow.application != self.config.application or "gcp" not in {
+            workflow.source_env,
+            workflow.target_env,
+        }:
+            return None
+        storage = await repo.resource(workflow_id, ResourceKind.OBJECT_STORAGE)
+        return {
+            "workflowId": workflow.id,
+            "stage": workflow.current_stage,
+            "status": workflow.status.value,
+            "migrationId": storage.migration_id,
+        }
 
     @staticmethod
     def phase_after_scan(state: dict[str, Any]) -> str:
         if any(c["status"] == "unknown" for c in state["checks"]):
             return "unknown"
-        return "gap" if any(c["status"] == "fail" for c in state["checks"]) else "matched"
+        gap = any(c["status"] == "fail" for c in state["checks"])
+        evidence = state.get("accessProbe")
+        if evidence is not None and evidence != dict(
+            receipt="allowed", copy="allowed", otherBucket="allowed" if gap else "denied"
+        ):
+            return "unknown"
+        return "gap" if gap else "matched"
 
     async def change(self, action: str, change: Change, actor: str) -> dict[str, Any]:
         if self.config.read_only and action == "apply":
@@ -239,6 +278,17 @@ class ReviewService:
                 if not await self.probe():
                     raise ApiError(409, "APP_NOT_READY", "앱 응답을 확인한 뒤 다시 조회하세요.")
                 changed = without_extra_grant(latest["extra"], self.config.gcp_principal)
+                if self.config.probes and (await self.access_probe()) != dict(
+                    receipt="allowed", copy="allowed", otherBucket="allowed"
+                ):
+                    raise ApiError(409, "PROBE_CHANGED", "객체 접근 결과를 다시 확인하세요.")
+                if await self.copy_context() != state.get("copyContext"):
+                    raise ApiError(409, "WORKFLOW_CHANGED", "마이그레이션 상태를 다시 조회하세요.")
+                if (
+                    fingerprint(changed) != plan["policyHash"]
+                    or self.clock.now().isoformat() >= plan["expiresAt"]
+                ):
+                    raise ApiError(409, "PLAN_STALE", "변경안을 다시 생성하세요.")
                 await asyncio.to_thread(self.provider.apply, changed)
                 state.update(phase="applied", plan=None)
                 self.event(state, "GCP 변경 적용 · 재확인 필요", actor)

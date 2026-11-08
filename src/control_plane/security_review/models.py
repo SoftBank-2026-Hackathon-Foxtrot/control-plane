@@ -13,6 +13,12 @@ OBJECT_ROLES = frozenset(
 )
 
 
+class ProbeAccounts(Model):
+    app_secret_ref: str = Field(pattern=r"^(aws|env):.+$")
+    copy_secret_ref: str = Field(pattern=r"^(aws|env):.+$")
+    copy_email: str = Field(pattern=r"^[\w.-]+@[\w.-]+\.iam\.gserviceaccount\.com$")
+
+
 class ReviewConfig(Model):
     application: str = Field(min_length=1)
     allowed_user_ids: list[str] = Field(min_length=1)
@@ -28,11 +34,16 @@ class ReviewConfig(Model):
     gcp_apply_credentials_ref: str | None = None
     mode: Literal["cloud", "fixture"] = "cloud"
     read_only: bool = True
+    probes: ProbeAccounts | None = None
 
     @model_validator(mode="after")
     def separate_buckets(self) -> Self:
         if self.gcp_bucket == self.extra_bucket:
             raise ValueError("the extra demo bucket must not be the application bucket")
+        if self.probes and (
+            self.mode != "cloud" or self.gcp_principal == "serviceAccount:" + self.probes.copy_email
+        ):
+            raise ValueError("runtime probes require two distinct cloud identities")
         if self.mode == "cloud" and not self.read_only:
             if not self.extra_bucket.startswith("foxtrot-security-demo-"):
                 raise ValueError("writes require a designated demo bucket")
@@ -42,7 +53,10 @@ class ReviewConfig(Model):
 
     @property
     def key(self) -> str:
-        return "SECURITY_REVIEW#" + fingerprint(self.model_dump())
+        data = self.model_dump()
+        if self.probes is None:
+            data.pop("probes")  # Keep the key of existing deployments.
+        return "SECURITY_REVIEW#" + fingerprint(data)
 
 
 class Change(Model):

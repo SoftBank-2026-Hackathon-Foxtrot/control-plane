@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 
+APP_OBJECT_ACTIONS = ("Read", "Write", "List")
+MIGRATION_OBJECT_ACTIONS = ("Admin", "Read", "Write", "List", "Tagging")
+
 
 def write_bundle(folder, repo, environment, host, material):
     folder = Path(folder)
@@ -26,14 +29,14 @@ def write_bundle(folder, repo, environment, host, material):
                     "secretKey": values["object_admin_secret"],
                 }
             ],
-            "actions": ["Admin", "Read", "Write", "List", "Tagging"],
+            "actions": list(MIGRATION_OBJECT_ACTIONS),
         },
         {
             "name": "app",
             "credentials": [
                 {"accessKey": values["object_app_key"], "secretKey": values["object_app_secret"]}
             ],
-            "actions": ["Read", "Write", "List"],
+            "actions": list(APP_OBJECT_ACTIONS),
         },
     ]
     (credentials / "s3.json").write_text(json.dumps({"identities": identities}))

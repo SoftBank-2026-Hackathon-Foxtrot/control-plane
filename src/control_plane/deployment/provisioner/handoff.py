@@ -1,5 +1,7 @@
 """Public v2 endpoint references, never resolved credential contents."""
 
+RECEIPTS_BUCKET = "receipts"
+
 
 def onprem(environment, inspection):
     selected = environment["resolved"]
@@ -54,7 +56,7 @@ def onprem(environment, inspection):
             "kind": "seaweedfs",
             "url": f"http://{hosts['storage']['serviceAddress']}:8333",
             "filer": f"{hosts['storage']['serviceAddress']}:18888",
-            "bucket": "receipts",
+            "bucket": RECEIPTS_BUCKET,
             "region": "us-east-1",
             "adminCredentialRefs": {
                 k: profile["secrets"][f"object_admin_{k}"] for k in ("key", "secret")
