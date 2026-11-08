@@ -1,0 +1,103 @@
+{
+  "tagOwners": {
+    "tag:onprem": [
+      "autogroup:admin"
+    ]
+  },
+  "acls": [
+    {
+      "action": "accept",
+      "src": [
+        "tag:onprem"
+      ],
+      "dst": [
+        "10.30.0.2:53"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "tag:onprem"
+      ],
+      "dst": [
+        "10.30.11.243:8000",
+        "10.30.10.21:6432",
+        "10.30.11.44:6379",
+        "10.30.11.118:8080"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "100.99.0.85"
+      ],
+      "dst": [
+        "tag:onprem:22"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "10.30.11.243"
+      ],
+      "dst": [
+        "tag:onprem:22,80"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "tag:onprem"
+      ],
+      "dst": [
+        "10.10.11.118:5432"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "10.30.10.21"
+      ],
+      "dst": [
+        "100.115.99.73:5432"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "10.30.10.106",
+        "10.30.10.203",
+        "10.30.11.44"
+      ],
+      "dst": [
+        "tag:onprem:6379"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "10.30.11.118"
+      ],
+      "dst": [
+        "tag:onprem:8333,18888"
+      ]
+    },
+    {
+      "action": "accept",
+      "proto": "tcp",
+      "src": [
+        "100.83.2.70"
+      ],
+      "dst": [
+        "tag:onprem:8333"
+      ]
+    }
+  ]
+}

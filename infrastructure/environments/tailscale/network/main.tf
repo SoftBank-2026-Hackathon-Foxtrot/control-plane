@@ -22,24 +22,35 @@ provider "aws" {
   default_tags { tags = { project = "foxtrot", environment = "dev", deployment_id = var.prefix, managed_by = "terraform" } }
 }
 provider "google" { project = var.project_id }
-provider "tailscale" { tailnet = "-" }
+provider "tailscale" { tailnet = var.tailscale_tailnet }
+
+variable "tailscale_tailnet" {
+  description = "Tailnet managed by this root. Only the Foxtrot team tailnet gets its demo VM rules."
+  type        = string
+  default     = "softbank-2026-hackathon-foxtrot.org.github"
+  validation {
+    condition     = length(trimspace(var.tailscale_tailnet)) > 0 && var.tailscale_tailnet != "-"
+    error_message = "Name the tailnet explicitly so an implicit credential cannot overwrite the wrong policy."
+  }
+}
 
 locals {
-  router_roles = toset(["aws", "gcp", "mgmt"])
-  router_tags  = [for role in sort(tolist(local.router_roles)) : "tag:${role}"]
+  onprem_policy = jsondecode(var.tailscale_tailnet == "softbank-2026-hackathon-foxtrot.org.github" ? file("${path.module}/../../../catalog/foxtrot-onprem-acl.json") : "{\"tagOwners\":{},\"acls\":[]}")
+  router_roles  = toset(["aws", "gcp", "mgmt"])
+  router_tags   = [for role in sort(tolist(local.router_roles)) : "tag:${role}"]
 }
 
 # The management VPC and both app clouds join the tailnet selected by this API credential.
 resource "tailscale_acl" "this" {
   overwrite_existing_content = true
   acl = jsonencode({
-    tagOwners     = { for tag in local.router_tags : tag => ["autogroup:admin"] }
+    tagOwners     = merge({ for tag in local.router_tags : tag => ["autogroup:admin"] }, local.onprem_policy.tagOwners)
     autoApprovers = { routes = var.routes }
-    acls = [
+    acls = concat([
       { action = "accept", src = concat(local.router_tags, keys(var.routes)),
       dst = concat([for tag in local.router_tags : "${tag}:*"], [for cidr in keys(var.routes) : "${cidr}:*"]) },
       { action = "accept", src = ["autogroup:admin"], dst = ["*:*"] },
-    ]
+    ], local.onprem_policy.acls)
   })
 }
 resource "tailscale_dns_preferences" "this" { magic_dns = true }

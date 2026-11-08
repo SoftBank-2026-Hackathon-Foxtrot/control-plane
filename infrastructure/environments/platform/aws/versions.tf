@@ -38,7 +38,7 @@ provider "google" {
 provider "cloudflare" {}
 
 # API token from Secrets Manager foxtrot/platform/tailscale-api-token, passed as TAILSCALE_API_KEY
-# at plan/apply time. "-" is the token's own tailnet.
+# at plan/apply time. Use the named tailnet to avoid overwriting a different credential's policy.
 provider "tailscale" {
-  tailnet = "-"
+  tailnet = var.tailscale_tailnet
 }

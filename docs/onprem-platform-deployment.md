@@ -6,9 +6,23 @@
 실행하지 않는다. 이 문서의 명령은 운영자가 나중에 실행하는 절차이며, 구현 검증에서는
 AWS apply, 원격 SSH, 컨테이너 기동을 실행하지 않았다.
 
-기존 AWS ECS task definition·Secrets Manager 주입·IAM·공용 Tailscale ACL·보안 그룹·DNS는
+기존 AWS ECS task definition·Secrets Manager 주입·IAM·보안 그룹·DNS는
 이 변경에서 수정하지 않는다. 온프렘 등록은 기존 workRoot의 별도 파일로 전달한다.
 등록 오류는 온프렘 기능만 비활성화하며 AWS/GCP의 설정과 기동 경로는 유지한다.
+
+팀 Tailnet의 정책은 콘솔에서만 수정하면 다음 Terraform 적용 때 유실될 수 있다.
+`infrastructure/environments/platform/aws`와 `infrastructure/environments/tailscale/network`는
+둘 다 정책 전체를 쓴다. 같은 팀 Tailnet에는 한 root만 운영 주체로 사용하고, 두 root는
+[같은 온프렘 규칙](../infrastructure/catalog/foxtrot-onprem-acl.json)을 읽는다. 다른 Tailnet은
+`tailscale_tailnet`에 실제 이름을 지정한다. `tag:onprem`은 기존 라우터의 전체 허용 규칙이나
+라우트 자동 승인에 포함하지 않는다.
+
+**데모 전, ECS 태스크 교체 또는 RDS 장애 조치 후** 저장소 루트에서
+`python infrastructure/catalog/refresh_onprem_acl.py --profile foxtrot`로 정책의 주소를 검사한다.
+이 명령은 AWS를 읽기만 한다. 두 게이트웨이가 교체됐다면 팀 Machines에서 현재 Tailnet IP를
+확인하고 `--mgmt-gateway`, `--aws-gateway`로 지정한다. 주소가 다르면 `--write`로 로컬
+JSON을 갱신하고 차이를 검토한 뒤 팀 정책에 반영한다. ECS 재배포가 정책을 자동 갱신하지는
+않는다. 온프렘 DB는 DB 어댑터 → VM TCP 5432와 VM → 원본 RDS TCP 5432가 모두 필요하다.
 
 ## 실행 구조와 지원 범위
 
