@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from control_plane.adapters.client import AdapterClient
 from control_plane.ai.api import router as ai_router
 from control_plane.ai.context import InfrastructureContext
+from control_plane.ai.inventory import SqliteDeploymentInventory
 from control_plane.ai.model import OpenAIModel
 from control_plane.ai.service import AIService
 from control_plane.ai.store import AIStore
@@ -272,7 +273,13 @@ def create_api(platform: Platform, *, run_loops: bool = True) -> FastAPI:
         http = httpx.AsyncClient(timeout=3, follow_redirects=False)
         platform.clients.append(http)
         platform.ai_service = AIService(
-            InfrastructureContext(context, platform.deployment_service),
+            InfrastructureContext(
+                context,
+                platform.deployment_service,
+                inventory=SqliteDeploymentInventory(path)
+                if (path := os.environ.get("CONTROL_PLANE_AI_DEPLOYMENT_INVENTORY_PATH"))
+                else None,
+            ),
             AIStore(context.repo.table, context.clock, settings.ai_retention_days),
             OpenAIModel(
                 key, settings.ai_model, settings.ai_timeout_seconds, settings.ai_max_output_tokens
