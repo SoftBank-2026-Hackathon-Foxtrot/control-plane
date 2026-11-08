@@ -189,7 +189,8 @@ async def create_workflow(
 
     async def execute() -> WorkflowDetail:
         if onprem:
-            return (await context.onprem_plans.create(body, session.user)).detail()
+            plans = context.onprem_plans
+            return await plans.describe(await plans.create(body, session.user))
         # The provisioner has one process/store. This admission lock serializes its public
         # updates with claiming the workflow's durable active slot.
         async with context.mutation_lock:
@@ -240,7 +241,8 @@ async def get_workflow(
     workflow_id: str, session: CurrentSession, context: Context
 ) -> WorkflowDetail:
     if workflow_id.startswith(ONPREM_PREFIX):
-        return (await context.onprem_plans.get(workflow_id, session.user.id)).detail()
+        plans = context.onprem_plans
+        return await plans.describe(await plans.get(workflow_id, session.user.id))
     workflow = await _workflow(context, workflow_id)
     detail = await _detail(context, workflow)
     # Newer release branches already collect and project observations independently (including
@@ -282,7 +284,8 @@ async def workflow_command(
 ) -> Response:
     async def execute() -> WorkflowDetail:
         if workflow_id.startswith(ONPREM_PREFIX):
-            return (await context.onprem_plans.command(workflow_id, body, session.user)).detail()
+            plans = context.onprem_plans
+            return await plans.describe(await plans.command(workflow_id, body, session.user))
         updated = await context.workflows.apply(
             workflow_id,
             CommandInput(

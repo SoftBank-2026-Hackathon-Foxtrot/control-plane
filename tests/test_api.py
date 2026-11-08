@@ -4,16 +4,24 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
 
+from control_plane.adapters.client import (
+    AdapterClient,
+    AdapterUnreachable,
+    MigrationView,
+    OperationView,
+)
 from control_plane.auth import AuthService, safe_return_path
 from control_plane.config import Settings
 from control_plane.domain.models import ActorState, ResourceKind, WorkflowStatus
 from control_plane.errors import ApiError
 from control_plane.main import create_api
+from control_plane.onprem_database import OnpremDatabase
 from tests.conftest import SETTINGS, World
 
 ORIGIN = "https://platform.test"
@@ -379,6 +387,103 @@ async def test_onprem_database_request_is_planned_without_dispatch(console: Cons
     assert request["profile"] == "postgres-rds-onprem-logical-pgbouncer-v1"
     assert await world.repo.active_workflow_id() is None
     assert await world.repo.hold(world.seed.scope) == before
+
+
+async def test_onprem_approvals_replay_lost_prepare_then_start_forward_sync(
+    console: Console,
+) -> None:
+    context = console.world.platform.context
+    await console.login()
+    role = {"writerRole": "app", "database": "app"}
+    secret = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:test/"
+    pair = OnpremDatabase.model_validate(
+        {
+            "bindingRef": "binding:onprem-demo",
+            "source": {
+                **role,
+                "provider": "AWS_RDS",
+                "host": "rds.example",
+                "secretRef": secret + "source",
+                "providerInstance": "arn:aws:rds:ap-northeast-2:123456789012:db:lab",
+            },
+            "target": {
+                **role,
+                "provider": "SELF_MANAGED",
+                "host": "vm.example",
+                "secretRef": secret + "target",
+            },
+        }
+    )
+    object.__setattr__(
+        context,
+        "settings",
+        context.settings.model_copy(update={"onprem_planning": True, "onprem_database": pair}),
+    )
+    db = AsyncMock(spec=AdapterClient)
+    context.workflows.adapters = {**context.workflows.adapters, ResourceKind.DATABASE: db}
+    created = MigrationView({"migrationId": "m-test", "revision": 1, "lifecycle": "CREATED"})
+    prepared = MigrationView(
+        {
+            "migrationId": "m-test",
+            "revision": 3,
+            "lifecycle": "PREPARED",
+            "allowedActions": ["START_SYNC"],
+        }
+    )
+    db.create_migration.return_value = created
+    db.act.side_effect = [AdapterUnreachable("lost ACK"), "prepare-op", "sync-op"]
+    db.migration.return_value = prepared
+    db.operation.return_value = OperationView("prepare-op", "SUCCEEDED", None, {})
+    hold = await console.world.repo.hold(console.world.seed.scope)
+    body = {"sourceEnv": "aws", "targetEnv": "onprem"}
+    wrong = pair.model_dump(by_alias=True, exclude={"binding_ref"})
+    wrong["target"]["host"] = "unregistered.example"
+    foreign = (
+        await console.http.post(
+            "/v1/workflows",
+            headers=console.change_headers(),
+            json={**body, "resources": {"DATABASE": wrong}},
+        )
+    ).json()
+    assert foreign["allowedCommands"] == ["ABORT"]
+    refused = await console.http.post(
+        f"/v1/workflows/{foreign['workflow']['id']}/commands",
+        headers=console.change_headers(),
+        json={"command": "APPROVE", "expectedVersion": 1},
+    )
+    assert refused.status_code == 409
+    db.create_migration.assert_not_awaited()
+    plan = (
+        await console.http.post("/v1/workflows", json=body, headers=console.change_headers())
+    ).json()
+    wid = plan["workflow"]["id"]
+    assert plan["allowedCommands"] == ["APPROVE", "ABORT"]
+
+    async def command(action: str, version: int) -> httpx.Response:
+        return await console.http.post(
+            f"/v1/workflows/{wid}/commands",
+            headers=console.change_headers(),
+            json={"command": action, "expectedVersion": version},
+        )
+
+    assert (await command("APPROVE", 1)).status_code == 503
+    after_loss = (await console.http.get(f"/v1/workflows/{wid}")).json()
+    assert after_loss["allowedCommands"] == ["APPROVE"]
+    version = after_loss["workflow"]["version"]
+    assert (await command("ABORT", version)).status_code == 409
+    prepared_plan = (await command("APPROVE", version)).json()
+    assert db.act.await_args_list[0] == db.act.await_args_list[1]
+    assert prepared_plan["resources"][0]["migrationId"] == "m-test"
+    assert prepared_plan["allowedCommands"] == ["APPROVE"]
+    synced = (await command("APPROVE", prepared_plan["workflow"]["version"])).json()
+    assert synced["allowedCommands"] == [] and synced["workflow"]["currentStage"] == 1
+    db.act.assert_awaited_with(
+        "m-test", f"{wid}:START_SYNC", {"action": "START_SYNC", "expectedRevision": 3}
+    )
+    db.create_migration.assert_awaited_once()
+    assert db.create_migration.await_args.args[1]["bindingRef"] == "binding:onprem-demo"
+    assert await console.world.repo.active_workflow_id() is None
+    assert await console.world.repo.hold(console.world.seed.scope) == hold
 
 
 async def test_resource_details_expose_adapter_rollback_evidence(

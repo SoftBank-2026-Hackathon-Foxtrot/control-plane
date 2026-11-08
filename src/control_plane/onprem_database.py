@@ -14,6 +14,16 @@ _RDS = re.compile(r"arn:aws[a-z-]*:rds:[a-z0-9-]+:[0-9]{12}:db:[A-Za-z0-9-]+")
 _IDENT = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 
 
+class OnpremDatabase(EndpointPair):
+    binding_ref: str | None = None
+
+    def request(self, workflow_id: str) -> dict[str, Any]:
+        request = migration_request(workflow_id, self)
+        if self.binding_ref:
+            request["bindingRef"] = self.binding_ref
+        return request
+
+
 def migration_request(workflow_id: str, pair: EndpointPair) -> dict[str, Any]:
     source, target = pair.source, pair.target
     if (

@@ -248,8 +248,7 @@ seed에 온프렘 actor를 추가하면 클라우드 간 전환도 그 actor의 
 같은 애플리케이션 화면에서 온프렘 계획을 독립적으로 시연하려면 플랫폼에
 `CONTROL_PLANE_ONPREM_PLANNING=true`를 설정하고 공유 seed는 그대로 둔다.
 원본 또는 대상이 `onprem`인 새 요청은 온프렘 계획 백엔드가 처리한다. 계획과 이벤트는
-사용자별로 따로 저장되고 클라우드 이전 슬롯, HOLD, 어댑터, 트래픽을 사용하지 않는다.
-계획을 생성·조회·취소할 수 있다. 실행 어댑터가 연결될 때까지 계획 승인 명령은 제공하지 않는다.
+사용자별로 따로 저장된다. 서버에 AWS 원본과 온프렘 대상 DB를 등록하면 그 쌍의 계획에서만 승인을 제공한다.
 온프렘 앱 배포에 연결할 때는 독립 scope에서 사용할 프로세스 수를
 `CONTROL_PLANE_ONPREM_ACTORS` JSON으로 설정한다. 준비 API가 노드·데이터 대상 등록을 대신하지 않는다.
 
@@ -301,5 +300,11 @@ HOLD는 실제 플랫폼 지시와 앱 보고로 확인해야 한다. 준비 han
 원본은 `AWS_RDS`와 실제 RDS ARN, 대상은 `SELF_MANAGED`, 양쪽 writer는 같은 이름이어야
 한다. 각 endpoint에는 host, port, database, writerRole, secretRef(Secrets Manager ARN)를 준다.
 이 계획은 사용자별 온프렘 저장소에만 남고 상세에는 전용 프로필과 `PLANNED`가 표시된다.
-계획 생성은 DB 어댑터를 호출하지 않는다. 온프렘 실행기가 연결되기 전까지 `APPROVE`는
-거부된다. 기존 클라우드 seed나 운영 binding을 편집해서 이 경로를 활성화하지 않는다.
+계획 생성은 DB 어댑터를 호출하지 않는다. 플랫폼 환경변수 `CONTROL_PLANE_ONPREM_DATABASE`에
+[온프렘 DB 설정 예시](../infrastructure/environments/platform/aws/onprem-database.tfvars.example.json)의 `onprem_database` 객체를 설정한다.
+콘솔에서 AWS → 온프렘 새 계획을 만들면 이 쌍을 사용한다. 첫 승인은 마이그레이션 등록과 PREPARE를 요청하고,
+준비가 끝난 뒤 두 번째 승인은 START_SYNC를 요청한다. 응답이 유실되면 계획을 다시 열고 같은 단계를 승인한다.
+어댑터는 원본과 현재 앱 binding이 일치하는지 검사하고 사용 중인 DB의 동시 이전을 차단한다.
+전용 binding을 사용할 때는 `onprem_database.bindingRef`에 해당 ID를 지정한다. 같은 원본 DB를
+다른 이전과 동시에 사용하면 어댑터의 리소스 잠금이 적용된다.
+복제가 READY가 된 뒤에도 쓰기 경로와 공용 트래픽은 기존 위치를 유지한다.

@@ -10,6 +10,8 @@ import boto3
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from control_plane.onprem_database import OnpremDatabase
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CONTROL_PLANE_", env_file=".env", extra="ignore")
@@ -19,6 +21,7 @@ class Settings(BaseSettings):
     port: int = 8000
     seed_path: str = "config/seed.yaml"
     onprem_planning: bool = False
+    onprem_database: OnpremDatabase | None = None
     onprem_actors: dict[str, int] = Field(default_factory=dict)
 
     table_name: str = "foxtrot-control-plane"
