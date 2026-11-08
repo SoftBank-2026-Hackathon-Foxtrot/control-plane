@@ -121,9 +121,10 @@ async def post(console: Console, path: str, body: dict[str, Any]) -> httpx.Respo
 
 def prometheus(request: httpx.Request) -> httpx.Response:
     query = request.url.params["query"]
-    assert 'foxtrot_workload_kind="USER_APPLICATION"' in query
     assert f'foxtrot_owner_id="{org_id(USER, "goods")}"' in query
-    assert 'foxtrot_deployment_id="' in query
+    assert 'application_id="goods"' in query
+    assert 'deployment_environment_name="' in query
+    assert 'deployment_id="' in query
     end = float(request.url.params.get("end", request.url.params.get("time", "0")))
     if request.url.path.endswith("query_range"):
         start, step = float(request.url.params["start"]), float(request.url.params["step"])

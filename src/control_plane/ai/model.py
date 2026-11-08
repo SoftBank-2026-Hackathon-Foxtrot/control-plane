@@ -40,14 +40,14 @@ Return only fields that should change. Give a concrete rationale for every chang
 The preceding change-field rule applies only to recommendation, not chat or analysis.
 Do not estimate a monetary cost or claim a budget is met without pricing data.
 App parameters may contain only cpu and memory_mib. Respect the supplied allocation validator.
-Basic sizing needs only native CPU/memory metrics. HTTP/OTel metrics are supplementary.
+Basic sizing needs only app runtime CPU/memory metrics. HTTP metrics are supplementary.
 AWS app.cpu/memory_mib allocate the entire ECS task shared by API, workers and optional tunnel.
 GCP app.cpu/memory_mib allocate EACH API/worker container, not the whole Cloud Run instance.
 Use resourceUsage absolute cores/MiB and resourceBounds. Never copy raw allocations across clouds.
 Choose a CPU/memory pair from allowedAppAllocations; the first pair is the deterministic default.
 Whole-task/instance usage is a conservative per-container bound when container CPU is unknown.
 Never divide aggregate usage by container count or claim container bottlenecks were measured.
-Native percentiles are minute aggregates, not per-request latency percentiles
+Resource percentiles are minute evaluations, not per-request latency percentiles
 or instantaneous peaks.
 """
 

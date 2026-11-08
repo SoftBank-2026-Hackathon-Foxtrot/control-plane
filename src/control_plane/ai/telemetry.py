@@ -10,6 +10,7 @@ import httpx
 
 from control_plane.ai.context import DeploymentScope
 from control_plane.ai.native_metrics import NativeMetricsReader
+from control_plane.ai.runtime_metrics import RuntimeMetricsReader, labels
 from control_plane.ai.schemas import AnalysisRequest
 from control_plane.config import Settings
 from control_plane.telemetry_query import read_backend
@@ -29,17 +30,11 @@ class TelemetryReader:
         native: NativeMetricsReader | None = None,
     ) -> None:
         self.settings, self.http = settings, http
-        self.native = native or NativeMetricsReader(http)
+        self.native = native or RuntimeMetricsReader(settings, http)
 
     async def collect(self, scope: DeploymentScope, request: AnalysisRequest) -> dict[str, Any]:
         settings = self.settings
-        labels = (
-            f"{settings.ai_application_label}={json.dumps(scope.application)},"
-            f"{settings.ai_environment_label}={json.dumps(scope.cloud)},"
-            f"foxtrot_owner_id={json.dumps(scope.owner_id)},"
-            f"foxtrot_deployment_id={json.dumps(scope.deployment_id)},"
-            'foxtrot_workload_kind="USER_APPLICATION"'
-        )
+        metric_labels = labels(scope)
         start, end = request.time_range.start.timestamp(), request.time_range.end.timestamp()
         duration = int(end - start)
         window = f"[{duration}s]"
@@ -47,17 +42,19 @@ class TelemetryReader:
         def histogram(metric: str, extra: str = "") -> str:
             return (
                 f"histogram_quantile(0.95,sum by(le)(increase("
-                f"{metric}{{{labels}{extra}}}{window}))) * 1000"
+                f"{metric}{{{metric_labels}{extra}}}{window}))) * 1000"
             )
 
         counts = "http_server_request_duration_seconds_count"
-        errors = f'{counts}{{{labels},http_response_status_code=~"5.."}}{window}'
-        total = f'{counts}{{{labels},http_response_status_code=~"[1-5].."}}{window}'
+        errors = f'{counts}{{{metric_labels},http_response_status_code=~"5.."}}{window}'
+        total = f'{counts}{{{metric_labels},http_response_status_code=~"[1-5].."}}{window}'
 
         # These names form the collector contract. Missing instrumentation yields null, not zero.
         queries = {
             "requestP95Ms": histogram("http_server_request_duration_seconds_bucket"),
-            "requestRatePerSecond": f"sum(increase({counts}{{{labels}}}{window})) / {duration}",
+            "requestRatePerSecond": (
+                f"sum(increase({counts}{{{metric_labels}}}{window})) / {duration}"
+            ),
             "errorRatePercent": (
                 f"100 * ((sum(increase({errors})) or vector(0)) / sum(increase({total})))"
             ),
@@ -113,7 +110,7 @@ class TelemetryReader:
                 },
             )
 
-        # Process utilization is not a task/instance utilization. It cannot replace native sizing.
+        # Resource usage is adapted from the same container series as the app console.
         supplementary = [key for key in selected if key not in FOCUS["RESOURCES"]]
         readings = await asyncio.gather(*(metric(key) for key in supplementary))
         metrics: dict[str, float | None] = {key: None for keys in FOCUS.values() for key in keys}
@@ -126,7 +123,8 @@ class TelemetryReader:
             quality.update(native["quality"])
         missing = [key for key in selected if metrics[key] is None]
         partial = missing or any(
-            row["temporalCoveragePercent"] is not None and row["temporalCoveragePercent"] < 80
+            row["state"] != "OK"
+            or (row["temporalCoveragePercent"] is not None and row["temporalCoveragePercent"] < 80)
             for row in quality.values()
         )
         state, data = await read_backend(
