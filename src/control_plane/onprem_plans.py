@@ -8,6 +8,7 @@ from control_plane.api.schemas import (
     CreateWorkflow,
     EventPage,
     HoldView,
+    ResourceView,
     StageView,
     WorkflowCommand,
     WorkflowDetail,
@@ -15,6 +16,7 @@ from control_plane.api.schemas import (
 from control_plane.clock import Clock
 from control_plane.domain.models import (
     Model,
+    ResourceKind,
     StageState,
     User,
     Workflow,
@@ -23,6 +25,7 @@ from control_plane.domain.models import (
 )
 from control_plane.domain.stages import PLAN
 from control_plane.errors import ApiError
+from control_plane.onprem_database import migration_request
 from control_plane.store.table import Table, VersionConflict
 
 ONPREM_PREFIX = "wf-onprem-"
@@ -31,6 +34,7 @@ ONPREM_PREFIX = "wf-onprem-"
 class PlanRecord(Model):
     workflow: Workflow
     events: list[WorkflowEvent]
+    database_request: dict[str, object] | None = None
 
     def detail(self) -> WorkflowDetail:
         stages = [StageState(index=i, kind=stage.kind) for i, stage in enumerate(PLAN)]
@@ -42,7 +46,22 @@ class PlanRecord(Model):
             hold=HoldView(
                 is_live=False, desired="UNKNOWN", generation=0, held_since=None, actors=[]
             ),
-            resources=[],
+            resources=[
+                ResourceView(
+                    kind=ResourceKind.DATABASE,
+                    migration_id=None,
+                    lifecycle=None,
+                    health=None,
+                    route=None,
+                    phase="PLANNED",
+                    target_writes_possible=False,
+                    readiness=None,
+                    observed_at=None,
+                    details={"profile": self.database_request["profile"]},
+                )
+            ]
+            if self.database_request is not None
+            else [],
             traffic=[],
         )
 
@@ -66,8 +85,15 @@ class OnpremPlans:
         pair = {body.source_env, body.target_env}
         if len(pair) != 2 or "onprem" not in pair or not (pair - {"onprem"}) <= self.sources:
             raise ApiError(422, "INVALID_ONPREM_DIRECTION", "select a cloud and the on-prem node")
-        if body.resources:
-            raise ApiError(422, "ONPREM_ENDPOINTS_NOT_CONFIGURED", "no execution backend is bound")
+        if body.resources and (
+            (body.source_env, body.target_env) != ("aws", "onprem")
+            or set(body.resources) != {ResourceKind.DATABASE}
+        ):
+            raise ApiError(
+                422,
+                "ONPREM_ENDPOINTS_NOT_CONFIGURED",
+                "only AWS to on-prem database inputs are supported",
+            )
         now = self.clock.now()
         workflow = Workflow(
             id=ONPREM_PREFIX + uuid4().hex,
@@ -80,6 +106,9 @@ class OnpremPlans:
         )
         plan = PlanRecord(
             workflow=workflow,
+            database_request=migration_request(workflow.id, body.resources[ResourceKind.DATABASE])
+            if ResourceKind.DATABASE in body.resources
+            else None,
             events=[
                 WorkflowEvent(
                     cursor="1",

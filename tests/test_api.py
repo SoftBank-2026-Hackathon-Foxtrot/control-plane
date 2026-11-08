@@ -317,6 +317,70 @@ async def test_onprem_planning_is_independent_of_cloud_migrations(
     assert (await world.run_to_end(cloud_id)).status.value == "COMPLETED"
 
 
+async def test_onprem_database_request_is_planned_without_dispatch(console: Console) -> None:
+    world = console.world
+    settings = world.platform.context.settings.model_copy(update={"onprem_planning": True})
+    object.__setattr__(world.platform.context, "settings", settings)
+    await console.login()
+    owner = (await console.http.get("/v1/me")).json()["user"]["id"]
+    ref = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:test/"
+    source = {
+        "provider": "AWS_RDS",
+        "providerInstance": "arn:aws:rds:ap-northeast-2:123456789012:db:lab",
+        "host": "source.example",
+        "database": "app",
+        "writerRole": "app",
+        "secretRef": ref + "rds",
+    }
+    target = {
+        "provider": "SELF_MANAGED",
+        "host": "vm.example",
+        "database": "appdb",
+        "writerRole": "app",
+        "secretRef": ref + "vm",
+    }
+
+    async def create(src: str, dst: str, node: dict[str, str]) -> httpx.Response:
+        return await console.http.post(
+            "/v1/workflows",
+            headers=console.change_headers(),
+            json={
+                "sourceEnv": src,
+                "targetEnv": dst,
+                "resources": {"DATABASE": {"source": source, "target": node}},
+            },
+        )
+
+    before = await world.repo.hold(world.seed.scope)
+    for invalid in (
+        target | {"writerRole": "other"},
+        target | {"secretRef": "literal-value"},
+        target | {"provider": "GCP_CLOUDSQL"},
+    ):
+        assert (await create("aws", "onprem", invalid)).status_code == 422
+    assert (await create("onprem", "aws", target)).status_code == 422
+    response = await create("aws", "onprem", target)
+    assert response.status_code == 201, response.text
+    plan = response.json()
+    assert plan["allowedCommands"] == ["ABORT"]
+    assert plan["resources"][0]["migrationId"] is None
+    wid = plan["workflow"]["id"]
+    stored = await world.platform.context.onprem_plans.get(wid, owner)
+    request = stored.database_request
+    assert request == {
+        "kind": "DATABASE",
+        "resourceId": "database",
+        "workflowId": wid,
+        "profile": plan["resources"][0]["details"]["profile"],
+        "policy": {"rollbackMode": "BEFORE_TARGET_WRITE", "maxQuiesceSeconds": 60},
+        "source": source | {"port": 5432},
+        "target": target | {"port": 5432},
+    }
+    assert request["profile"] == "postgres-rds-onprem-logical-pgbouncer-v1"
+    assert await world.repo.active_workflow_id() is None
+    assert await world.repo.hold(world.seed.scope) == before
+
+
 async def test_resource_details_expose_adapter_rollback_evidence(
     console: Console, world: World
 ) -> None:
