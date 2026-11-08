@@ -240,10 +240,29 @@ async def test_abort_before_any_cutover_cancels_everything_and_frees_the_slot(
     final = await world.until(workflow.id, WorkflowStatus.ABORTED)
 
     assert final.finished_at is not None
-    for adapter in world.adapters.values():
-        assert adapter.only.lifecycle == "CANCELLED"
+    # The database's CANCEL leaves its subscription; FINALIZE removes it for the next migration.
+    assert world.db.only.lifecycle == "COMPLETED"
+    assert world.db.executed["FINALIZE"] == 1
+    for kind in (ResourceKind.REDIS, ResourceKind.OBJECT_STORAGE):
+        assert world.adapters[kind].only.lifecycle == "CANCELLED"
+        assert world.adapters[kind].executed["FINALIZE"] == 0
     assert await world.repo.active_workflow_id() is None
     assert (await world.start()).id != workflow.id
+
+
+async def test_abort_still_finishes_if_the_cancelled_database_cannot_be_cleaned_up(
+    world: World,
+) -> None:
+    workflow = await world.start()
+    await world.at_stage(workflow.id, 2)
+    await world.command(workflow.id, "HALT")
+    world.db.faults["FINALIZE"] = Fault("REFUSE", code="PRECONDITION_FAILED", times=50)
+    await world.command(workflow.id, "ABORT")
+    await world.until(workflow.id, WorkflowStatus.ABORTED)
+
+    assert world.db.only.lifecycle == "CANCELLED"
+    assert "CANCEL_CLEANUP_FAILED" in await world.event_types(workflow.id)
+    assert await world.repo.active_workflow_id() is None
 
 
 async def test_abort_leaves_a_switched_resource_where_it_is(world: World) -> None:
@@ -251,7 +270,7 @@ async def test_abort_leaves_a_switched_resource_where_it_is(world: World) -> Non
     await world.command(workflow_id, "ABORT")
     await world.until(workflow_id, WorkflowStatus.ABORTED)
     assert world.object.only.lifecycle == "ACTIVE"
-    assert world.db.only.lifecycle == "CANCELLED"
+    assert world.db.only.lifecycle == "COMPLETED"
 
 
 async def test_abort_refuses_to_walk_away_from_a_paused_database(world: World) -> None:
