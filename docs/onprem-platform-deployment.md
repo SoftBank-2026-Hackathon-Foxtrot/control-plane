@@ -272,7 +272,7 @@ DB·Redis의 직접 접속 방식은 해당 요청의 `resources`에 명시한 s
 
 | 남은 연결 | 위치와 필요한 작업 |
 | --- | --- |
-| DB RDS → self-managed PostgreSQL | 선택할 DB 어댑터 profile의 RDS → SELF_MANAGED 지원·TLS·writer fence 검증 |
+| DB RDS → self-managed PostgreSQL | DB 어댑터가 `postgres-rds-onprem-logical-pgbouncer-v1`을 제공해야 함. 어댑터와 VM 간 TLS, VM 구독자 → 원본 RDS와 writer fence를 검증 |
 | 앱 테이블 준비 | 사용자 앱의 schema bootstrap. Ansible이나 이 executor가 앱 테이블을 만들지 않음 |
 | Valkey / SeaweedFS 대상 등록 | 각 어댑터에 handoff endpoint와 credential 참조 등록. 어댑터의 secret store에서 해석 가능해야 함 |
 | HOLD 및 프로세스 수 | control-plane seed에 온프렘 actors/target resource를 등록하고 실제 heartbeat·writer fence 확인 |
@@ -281,3 +281,11 @@ DB·Redis의 직접 접속 방식은 해당 요청의 `resources`에 명시한 s
 HOLD는 실제 플랫폼 지시와 앱 보고로 확인해야 한다. 준비 handoff에 있는 초기 모드 값만으로
 확인했다고 간주하지 않는다. 이 변경은 DB 어댑터 profile 확장, Cloudflare origin 생성,
 실제 데이터 복제·전환까지 완료했다고 표시하지 않는다.
+
+온프렘 계획 API(`POST /v1/workflows`)는 `sourceEnv: aws`, `targetEnv: onprem`일 때
+`resources.DATABASE.source`와 `resources.DATABASE.target`을 함께 받을 수 있다.
+원본은 `AWS_RDS`와 실제 RDS ARN, 대상은 `SELF_MANAGED`, 양쪽 writer는 같은 이름이어야
+한다. 각 endpoint에는 host, port, database, writerRole, secretRef(Secrets Manager ARN)를 준다.
+이 계획은 사용자별 온프렘 저장소에만 남고 상세에는 전용 프로필과 `PLANNED`가 표시된다.
+계획 생성은 DB 어댑터를 호출하지 않는다. 온프렘 실행기가 연결되기 전까지 `APPROVE`는
+거부된다. 기존 클라우드 seed나 운영 binding을 편집해서 이 경로를 활성화하지 않는다.
