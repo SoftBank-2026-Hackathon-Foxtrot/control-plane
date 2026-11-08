@@ -2,8 +2,19 @@
 # for *.internal, and one reusable, pre-approved auth key per role, written straight into the
 # secret slots the gateway and the shared cloud routers read at boot.
 
+variable "tailscale_tailnet" {
+  description = "Tailnet managed by this root. Only the Foxtrot team tailnet gets its demo VM rules."
+  type        = string
+  default     = "softbank-2026-hackathon-foxtrot.org.github"
+  validation {
+    condition     = length(trimspace(var.tailscale_tailnet)) > 0 && var.tailscale_tailnet != "-"
+    error_message = "Name the tailnet explicitly so an implicit credential cannot overwrite the wrong policy."
+  }
+}
+
 locals {
-  ts_tags = { mgmt = "tag:mgmt", aws = "tag:aws", gcp = "tag:gcp" }
+  onprem_policy = jsondecode(var.tailscale_tailnet == "softbank-2026-hackathon-foxtrot.org.github" ? file("${path.module}/../../../catalog/foxtrot-onprem-acl.json") : "{\"tagOwners\":{},\"acls\":[]}")
+  ts_tags       = { mgmt = "tag:mgmt", aws = "tag:aws", gcp = "tag:gcp" }
   ts_routes = {
     (var.vpc_cidr)                                                                                                                                       = ["tag:mgmt"]
     (local.provisioner_baseline.aws.baseline.network.vpc_cidr)                                                                                           = ["tag:aws"]
@@ -15,15 +26,15 @@ locals {
 resource "tailscale_acl" "this" {
   overwrite_existing_content = true
   acl = jsonencode({
-    tagOwners = { for t in values(local.ts_tags) : t => ["autogroup:admin"] }
-    acls = [
+    tagOwners = merge({ for t in values(local.ts_tags) : t => ["autogroup:admin"] }, local.onprem_policy.tagOwners)
+    acls = concat([
       # Platform and app environments reach each other and the VPC ranges they advertise.
       # Sources include the advertised ranges: a platform task (10.30.x) keeps its own address
       # through the gateway, and the receiving router checks that address against this rule.
       { action = "accept", src = concat(values(local.ts_tags), keys(local.ts_routes)),
       dst = concat([for t in values(local.ts_tags) : "${t}:*"], [for r in keys(local.ts_routes) : "${r}:*"]) },
       { action = "accept", src = ["autogroup:admin"], dst = ["*:*"] },
-    ]
+    ], local.onprem_policy.acls)
     autoApprovers = { routes = local.ts_routes }
   })
 }
