@@ -199,7 +199,7 @@ async def test_chat_history_scope_owner_and_idempotency(console: Console, model:
     assert exc.value.status == 404
 
 
-async def test_platform_seed_workflows_and_foreign_apps_never_reach_model(
+async def test_shared_deployments_omit_platform_configuration_and_secrets(
     console: Console, model: FakeModel, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     engine = console.app.state.ai_service.infra.deployment
@@ -220,7 +220,7 @@ async def test_platform_seed_workflows_and_foreign_apps_never_reach_model(
     await console.login()
     assert (await post(console, "chat", {"message": "인프라 알려줘"})).status_code == 200
     payload = model.calls[-1][1]
-    assert len(payload["sources"]) == 3
+    assert len(payload["sources"]) == 4
     assert all(s["type"].startswith("USER_APPLICATION") for s in payload["sources"])
     serialized = json.dumps(payload)
     for secret in (
@@ -236,7 +236,7 @@ async def test_platform_seed_workflows_and_foreign_apps_never_reach_model(
     ):
         assert secret not in serialized
     inventory = (await console.http.get("/v1/ai/deployments")).json()
-    assert len(inventory["deployments"]) == 2
+    assert len(inventory["deployments"]) == 3
 
 
 async def test_no_deployments_does_not_fall_back_to_shared_configuration(
@@ -332,6 +332,58 @@ async def test_recommendation_collects_native_metrics_without_manual_requirement
     assert all("requirements" not in payload for _, payload in model.calls)
 
 
+async def test_shared_deployment_analysis_and_recommendation_apply(
+    console: Console, model: FakeModel
+) -> None:
+    engine = console.app.state.ai_service.infra.deployment
+    console.app.state.deployment_service = engine
+    for record in engine.store.environments():
+        engine.store.update_environment(record["id"], record["updated_at"], status="DESTROYED")
+    shared = {}
+    for cloud in ("aws", "gcp"):
+        _, created = engine.create({"org": {"id": org_id("stranger", "goods")}, "cloud": cloud})
+        shared[cloud] = created["environmentId"]
+    drain(engine)
+
+    class Native(FakeNativeMetrics):
+        async def collect(self, scope: Any, request: AnalysisRequest) -> dict[str, Any]:
+            assert scope.owner_id == org_id("stranger", "goods")
+            return await super().collect(scope, request)
+
+    await console.login()
+    async with httpx.AsyncClient() as http:
+        console.app.state.ai_service.telemetry = TelemetryReader(
+            Settings(_env_file=None), http, native=Native()
+        )
+        chat = await post(console, "chat", {"deploymentId": shared["aws"], "message": "배포 확인"})
+        assert chat.status_code == 200, chat.text
+        analysis = await post(
+            console, "analyses", {**analysis_body(console), "deploymentId": shared["aws"]}
+        )
+        assert analysis.status_code == 200, analysis.text
+        response = await post(
+            console,
+            "recommendations",
+            {"sourceDeploymentId": shared["aws"], "targetEnvironment": "gcp"},
+        )
+        assert response.status_code == 200, response.text
+        result = response.json()
+    assert result["targetDeploymentId"] == shared["gcp"]
+    assert result["iac"]["action"] == "UPDATE"
+    applied = await console.http.post(
+        result["iac"]["endpoint"], json=result["iac"]["body"], headers=console.change_headers()
+    )
+    assert applied.status_code == 202, applied.text
+    drain(engine)
+    job = await console.http.get(f"/v1/provisioning/jobs/{applied.json()['jobId']}")
+    assert job.status_code == 200 and job.json()["status"] == "SUCCEEDED"
+    changed = engine.store.environment(shared["gcp"])
+    assert changed["org_id"] == org_id("stranger", "goods")
+    assert changed["status"] == "READY"
+    assert changed["tfvars"]["app"]["cpu"] == result["effectiveAppAllocation"]["cpu"]
+    assert changed["tfvars"]["app"]["memory_mib"] == 4096
+
+
 async def test_missing_native_metrics_blocks_recommendation_without_model(
     console: Console, model: FakeModel
 ) -> None:
@@ -424,13 +476,12 @@ async def test_unsupported_capacity_is_not_a_fabricated_recommendation(
     assert response.json()["status"] == "CONSTRAINT_LIMIT" and not model.calls
 
 
-async def test_foreign_unapplied_destroyed_or_wrong_environment_blocks_backend_reads(
+async def test_unapplied_destroyed_or_wrong_environment_blocks_backend_reads(
     console: Console, model: FakeModel
 ) -> None:
     await console.login()
     engine = console.app.state.ai_service.infra.deployment
     _, foreign = engine.create({"org": {"id": org_id("stranger", "goods")}, "cloud": "aws"})
-    drain(engine)
     seen = []
 
     def backend(request: httpx.Request) -> httpx.Response:
@@ -551,7 +602,7 @@ async def test_nonfinite_invalid_and_stale_telemetry_is_missing(
     console: Console, model: FakeModel, value: str
 ) -> None:
     query = AnalysisRequest.model_validate({**analysis_body(console), "focus": ["RESOURCES"]})
-    scope = await console.app.state.ai_service.infra.owned(USER, query.deployment_id)
+    scope = await console.app.state.ai_service.infra.visible(query.deployment_id)
     scope.snapshot["appliedAt"] = query.time_range.start.isoformat()
     end = int(query.time_range.end.timestamp())
     result = summarize(
@@ -570,7 +621,7 @@ async def test_nonfinite_invalid_and_stale_telemetry_is_missing(
 async def test_tempo_queries_have_owner_deployment_and_user_app_filters(
     console: Console, model: FakeModel
 ) -> None:
-    scope = await console.app.state.ai_service.infra.owned(USER, source_id(console))
+    scope = await console.app.state.ai_service.infra.visible(source_id(console))
     seen = []
 
     def backend(request: httpx.Request) -> httpx.Response:
@@ -602,7 +653,7 @@ async def test_applied_snapshot_survives_failed_update_and_omits_secrets(
     drain(engine)
     assert engine.get(env_id)["appliedSnapshot"] == previous
     with pytest.raises(ApiError) as exc:
-        await console.app.state.ai_service.infra.owned(USER, env_id, ready=True)
+        await console.app.state.ai_service.infra.visible(env_id, ready=True)
     assert exc.value.status == 409
 
 

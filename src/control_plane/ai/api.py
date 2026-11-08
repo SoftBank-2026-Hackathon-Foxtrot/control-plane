@@ -62,13 +62,10 @@ async def status(request: Request, context: Context, _: CurrentSession) -> dict[
 
 
 @router.get("/deployments")
-async def deployments(request: Request, session: CurrentSession) -> dict[str, Any]:
+async def deployments(request: Request, _: CurrentSession) -> dict[str, Any]:
     return {
         "dataScope": DATA_SCOPE,
-        "deployments": [
-            scope.public()
-            for scope in await service(request).infra.deployments(str(session.user.id))
-        ],
+        "deployments": [scope.public() for scope in await service(request).infra.deployments()],
     }
 
 

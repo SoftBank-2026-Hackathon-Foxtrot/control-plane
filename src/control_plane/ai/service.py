@@ -186,10 +186,10 @@ class AIService:
                 "sources": await self.infra.collect(user, selected, deployment_id),
             }
         elif isinstance(request, AnalysisRequest):
-            scope = await self.infra.owned(user, request.deployment_id, ready=True)
+            scope = await self.infra.visible(request.deployment_id, ready=True)
             payload = await self._read_analysis(scope, request)
         else:
-            scope = await self.infra.owned(user, request.source_deployment_id, ready=True)
+            scope = await self.infra.visible(request.source_deployment_id, ready=True)
             catalog = self.infra.catalog(request.target_environment)
             # Allow for native cloud metrics publication latency.
             end = self.store.clock.now() - timedelta(minutes=3)
@@ -203,7 +203,7 @@ class AIService:
             current = self.infra.source(scope)["data"]
             targets = [
                 target
-                for target in await self.infra.deployments(user)
+                for target in await self.infra.deployments()
                 if target.cloud == request.target_environment
                 and target.status in {"READY", "INFRA_READY", "APP_NOT_READY"}
             ]

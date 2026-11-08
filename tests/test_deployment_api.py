@@ -1,4 +1,4 @@
-"""The fixed application can deploy without registration; ownership and CSRF still apply."""
+"""The fixed application shares deployment reads and sizing updates; request checks still apply."""
 
 from __future__ import annotations
 
@@ -241,7 +241,7 @@ async def test_sizing_update_keeps_fixed_runtime_and_environment(
         assert after["tfvars"]["app"][field] == before["tfvars"]["app"][field]
 
 
-async def test_existing_deployments_remain_visible_and_other_owners_stay_hidden(
+async def test_all_application_deployments_are_visible_and_sizing_updates_are_shared(
     deployment_console: Console,
 ) -> None:
     console = deployment_console
@@ -255,17 +255,23 @@ async def test_existing_deployments_remain_visible_and_other_owners_stay_hidden(
     for url in (DEPLOY, "/v1/provisioning/environments"):
         response = await console.http.get(url)
         assert response.status_code == 200
-        assert [env["environmentId"] for env in response.json()["environments"]] == [
-            jobs[0]["environmentId"]
-        ]
+        assert {env["environmentId"] for env in response.json()["environments"]} == {
+            job["environmentId"] for job in jobs
+        }
     for job in jobs[1:]:
         environment = f"/v1/provisioning/environments/{job['environmentId']}"
-        assert (await console.http.get(environment)).status_code == 404
-        assert (await console.http.get(f"/v1/provisioning/jobs/{job['jobId']}")).status_code == 404
+        assert (await console.http.get(environment)).status_code == 200
+        assert (await console.http.get(f"/v1/provisioning/jobs/{job['jobId']}")).status_code == 200
         response = await console.http.post(
-            f"{environment}/update", json={}, headers=console.change_headers()
+            f"{environment}/update",
+            json={"app": {"cpu": 2, "memoryMiB": 4096}},
+            headers=console.change_headers(),
         )
-        assert response.status_code == 404
+        assert response.status_code == 202, response.text
+        drain(engine)
+        changed = engine.store.environment(job["environmentId"])
+        assert changed["tfvars"]["app"]["cpu"] == 2
+        assert changed["tfvars"]["app"]["memory_mib"] == 4096
     response = await console.http.get("/v1/applications/other/deployments")
     assert response.status_code == 404
     response = await console.http.post(
@@ -336,3 +342,30 @@ async def test_onprem_requires_a_server_configured_image(deployment_console: Con
     assert response.status_code == 503
     assert response.json()["code"] == "DEPLOYMENT_NOT_CONFIGURED"
     assert engine.store.environments() == []
+
+
+async def test_shared_sizing_update_keeps_request_checks(deployment_console: Console) -> None:
+    console = deployment_console
+    engine = console.app.state.deployment_service
+    _, created = engine.create({"org": {"id": org_id("stranger", "goods")}, "cloud": "aws"})
+    drain(engine)
+    url = f"/v1/provisioning/environments/{created['environmentId']}/update"
+    before = engine.store.environments()
+    calls = list(engine.tf.calls)
+    headers = console.change_headers()
+    body = {"app": {"cpu": 2, "memoryMiB": 4096}}
+    for invalid in (
+        {"Origin": "https://other.test"},
+        {"X-CSRF-Token": "bad"},
+    ):
+        response = await console.http.post(url, json=body, headers={**headers, **invalid})
+        assert response.status_code == 403
+    for action in ("apply", "check-app"):
+        response = await console.http.post(
+            url.removesuffix("update") + action, json={}, headers=console.change_headers()
+        )
+        assert response.status_code == 404
+    console.http.cookies.clear()
+    assert (await console.http.post(url, json=body, headers=headers)).status_code == 401
+    assert engine.store.environments() == before
+    assert engine.tf.calls == calls

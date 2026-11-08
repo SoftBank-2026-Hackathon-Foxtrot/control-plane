@@ -191,10 +191,11 @@ async def deployments(
     application_id: str, request: Request, context: Context, session: CurrentSession
 ) -> dict[str, Any]:
     fixed_application(context, application_id)
-    owner = org_id(str(session.user.id), application_id)
     engine = service(request)
     items = await call(engine.store.environments)
-    return {"environments": [engine.view(item) for item in items if item["org_id"] == owner]}
+    return {
+        "environments": [engine.view(item) for item in items if item["template"] == APP_TEMPLATE]
+    }
 
 
 @router.api_route("/v1/provisioning/{path:path}", methods=["GET", "POST"])
@@ -221,14 +222,16 @@ async def provisioning(
             "environments": [
                 engine.view(item)
                 for item in await call(engine.store.environments)
-                if item["org_id"] == owner
+                if item["template"] == APP_TEMPLATE
             ]
         }
     match = re.fullmatch(r"environments/(env-[a-f0-9]{12})(?:/(apply|update|check-app))?", path)
     if match:
         env_id, action = match.groups()
         env = await call(engine.store.environment, env_id)
-        if env is None or env["org_id"] != owner:
+        if env is None or env["template"] != APP_TEMPLATE:
+            raise ApiError(404, "NOT_FOUND", "deployment not found")
+        if request.method == "POST" and action in {"apply", "check-app"} and env["org_id"] != owner:
             raise ApiError(404, "NOT_FOUND", "deployment not found")
         if request.method == "GET" and action is None:
             return engine.view(env)
@@ -258,7 +261,7 @@ async def provisioning(
     if job and request.method == "GET":
         saved = await call(engine.store.job, job.group(1))
         env = await call(engine.store.environment, saved["environment_id"]) if saved else None
-        if env is None or env["org_id"] != owner:
+        if env is None or env["template"] != APP_TEMPLATE:
             raise ApiError(404, "NOT_FOUND", "job not found")
         result = await call(engine.job, job.group(1))
         result.pop("logTail", None)
