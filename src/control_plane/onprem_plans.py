@@ -94,12 +94,17 @@ class OnpremPlans:
                 "ONPREM_ENDPOINTS_NOT_CONFIGURED",
                 "only AWS to on-prem database inputs are supported",
             )
+        if body.target_configuration is not None:
+            raise ApiError(
+                409, "TARGET_SIZING_UNAVAILABLE", "on-prem plans have no execution backend bound"
+            )
         now = self.clock.now()
         workflow = Workflow(
             id=ONPREM_PREFIX + uuid4().hex,
             application=self.application,
             source_env=body.source_env,
             target_env=body.target_env,
+            status=WorkflowStatus.PLANNED,
             created_by=user.login,
             created_at=now,
             version=1,

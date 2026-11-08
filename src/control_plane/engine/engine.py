@@ -17,13 +17,16 @@ from control_plane.dbgate import DbGateError
 from control_plane.domain.models import (
     Halt,
     HoldDesired,
+    ResourceKind,
+    RollbackRequest,
+    StageKind,
     StageState,
     StageStatus,
     Workflow,
     WorkflowEvent,
     WorkflowStatus,
 )
-from control_plane.domain.stages import PLAN, requires_approval, skipped
+from control_plane.domain.stages import CUTOVER_ORDER, PLAN, requires_approval, skipped
 from control_plane.engine.commands import CommandRunner
 from control_plane.engine.context import Outcome, Passed, Services, StageContext, Stop, Wait
 from control_plane.engine.evidence import RunningEvidence
@@ -103,14 +106,33 @@ class Engine:
 
     @staticmethod
     def _needs_work(workflow: Workflow) -> bool:
-        return workflow.status in {
-            WorkflowStatus.RUNNING,
-            WorkflowStatus.ROLLING_BACK,
-            WorkflowStatus.ABORTING,
-        } or (workflow.status is WorkflowStatus.HALTED and workflow.reconcile_requested)
+        return (
+            workflow.status
+            in {
+                WorkflowStatus.PLANNED,
+                WorkflowStatus.RUNNING,
+                WorkflowStatus.ROLLING_BACK,
+                WorkflowStatus.ABORTING,
+            }
+            or (
+                workflow.status is WorkflowStatus.WAITING_APPROVAL
+                and PLAN[workflow.current_stage].kind in {StageKind.PREPARE, StageKind.FINALIZE}
+            )
+            or (workflow.status is WorkflowStatus.HALTED and workflow.reconcile_requested)
+        )
 
     async def _drive(self, workflow: Workflow) -> None:
         stage = await self._current_stage(workflow)
+        if workflow.status is WorkflowStatus.PLANNED or (
+            workflow.status is WorkflowStatus.WAITING_APPROVAL and stage.kind is StageKind.PREPARE
+        ):
+            await self.services.repo.save_workflow(
+                workflow.model_copy(update={"status": WorkflowStatus.RUNNING})
+            )
+            return
+        if workflow.status is WorkflowStatus.WAITING_APPROVAL and stage.kind is StageKind.FINALIZE:
+            await self._wait_for_completion_decision(workflow)
+            return
         match workflow.status:
             case WorkflowStatus.RUNNING:
                 await self._drive_stage(workflow, stage)
@@ -133,6 +155,15 @@ class Engine:
         if stage.status in (StageStatus.PASSED, StageStatus.SKIPPED):
             # The previous tick saved the stage but lost the race to save the workflow.
             await self._next_stage(workflow)
+            return
+        if (
+            stage.kind is StageKind.FINALIZE
+            and not workflow.finalize_requested
+            and workflow.approved_through < stage.index
+        ):
+            # A legacy plan may already be cleaning up after its final approval. Never offer
+            # rollback again once that irreversible decision has been recorded.
+            await self._wait_for_completion_decision(workflow)
             return
         managed = frozenset(self.services.seed.managed)
         if skipped(stage.kind, managed):
@@ -216,7 +247,29 @@ class Engine:
             await repo.release_active(workflow.id)
             await self._event(workflow, "WORKFLOW_COMPLETED", "", workflow.current_stage)
             return
-        await repo.save_workflow(workflow.model_copy(update={"current_stage": following}))
+        next_workflow = workflow.model_copy(update={"current_stage": following})
+        if (
+            PLAN[following].kind is StageKind.FINALIZE
+            and not workflow.finalize_requested
+            and workflow.approved_through < following
+        ):
+            await self._wait_for_completion_decision(next_workflow)
+        else:
+            await repo.save_workflow(next_workflow)
+
+    async def _wait_for_completion_decision(self, workflow: Workflow) -> None:
+        await self.services.repo.save_workflow(
+            workflow.model_copy(
+                update={
+                    "status": WorkflowStatus.CUTOVER_COMPLETE,
+                    "cutover_completed_at": workflow.cutover_completed_at
+                    or self.services.clock.now(),
+                }
+            )
+        )
+        await self._event(
+            workflow, "CUTOVER_COMPLETED", "choose ROLLBACK or FINALIZE", workflow.current_stage
+        )
 
     async def _wait_for_approval(self, workflow: Workflow) -> None:
         await self.services.repo.save_workflow(
@@ -272,8 +325,10 @@ class Engine:
 
     # ---- ways out -----------------------------------------------------------------------------
     async def _drive_rollback(self, workflow: Workflow, stage: StageState) -> None:
-        outcome = await self._attempt(workflow, stage, self.rollback.advance)
-        assert workflow.rollback is not None
+        if workflow.rollback is None and workflow.rollback_all:
+            outcome = await self._attempt(workflow, stage, self.rollback.finish_all)
+        else:
+            outcome = await self._attempt(workflow, stage, self.rollback.advance)
         match outcome:
             case Wait(detail):
                 stage.detail = detail
@@ -281,6 +336,10 @@ class Engine:
             case Stop():
                 await self._halt(workflow, stage, outcome)
             case Passed():
+                if workflow.rollback_all:
+                    await self._advance_full_rollback(workflow, stage)
+                    return
+                assert workflow.rollback is not None
                 resource = workflow.rollback.resource
                 await self.services.repo.save_stage(workflow.id, stage)
                 await self.services.repo.save_workflow(
@@ -300,6 +359,47 @@ class Engine:
                     )
                 )
                 await self._event(workflow, "ROLLBACK_COMPLETED", resource.value, stage.index)
+
+    async def _advance_full_rollback(self, workflow: Workflow, stage: StageState) -> None:
+        repo = self.services.repo
+        await repo.save_stage(workflow.id, stage)
+        if workflow.rollback is None:
+            await repo.save_workflow(
+                workflow.model_copy(
+                    update={
+                        "status": WorkflowStatus.ROLLED_BACK,
+                        "halt": None,
+                        "finished_at": self.services.clock.now(),
+                    }
+                )
+            )
+            await repo.release_active(workflow.id)
+            await self._event(
+                workflow, "WORKFLOW_ROLLED_BACK", "all resources and traffic restored", stage.index
+            )
+            return
+        resource = workflow.rollback.resource
+        restored = list(dict.fromkeys([*workflow.rolled_back, resource]))
+        pending = [
+            kind
+            for kind in reversed(CUTOVER_ORDER)
+            if kind in self.services.seed.managed and kind not in restored
+        ]
+        await repo.save_workflow(
+            workflow.model_copy(
+                update={
+                    "rolled_back": restored,
+                    "rollback": RollbackRequest(
+                        resource=pending[0], requested_by=workflow.rollback.requested_by
+                    )
+                    if pending
+                    else None,
+                }
+            )
+        )
+        await self._event(
+            workflow, "RESOURCE_ROLLED_BACK", resource.value, stage.index, resource=resource
+        )
 
     async def _drive_abort(self, workflow: Workflow, stage: StageState) -> None:
         outcome = await self._attempt(workflow, stage, self.abort.advance)
@@ -350,8 +450,22 @@ class Engine:
         )
         await self._event(workflow, "RECONCILE_FINISHED", "", stage.index)
 
-    async def _event(self, workflow: Workflow, type_: str, message: str, stage: int) -> None:
+    async def _event(
+        self,
+        workflow: Workflow,
+        type_: str,
+        message: str,
+        stage: int,
+        *,
+        resource: ResourceKind | None = None,
+    ) -> None:
         await self.services.repo.add_event(
             workflow.id,
-            WorkflowEvent(at=self.services.clock.now(), type=type_, stage=stage, message=message),
+            WorkflowEvent(
+                at=self.services.clock.now(),
+                type=type_,
+                stage=stage,
+                message=message,
+                resource=resource,
+            ),
         )

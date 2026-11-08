@@ -73,6 +73,12 @@ class Prepare:
             problem = await self._onprem_targets(ctx)
             if problem is not None:
                 return problem
+        if ctx.workflow.target_configuration is not None:
+            from control_plane.deployment.migration_sizing import prepare_target
+
+            configured = await prepare_target(ctx)
+            if not isinstance(configured, Passed):
+                return configured
         for env in (ctx.source_env, ctx.target_env):
             if not await ctx.services.prober.is_ready(env.app_url):
                 if ctx.elapsed("apps_ready") > ctx.seed.timings.command_timeout:
@@ -506,7 +512,7 @@ class Finalize:
                     "FINALIZE",
                     expected=expected_after("FINALIZE"),
                     # The adapters have no waiting period of their own: FINALIZE goes when this
-                    # stage is approved. Their remaining checks may still take a moment.
+                    # completion decision is made. Remaining safety checks may take a moment.
                     not_allowed_timeout=ctx.seed.timings.finalize_timeout,
                 ),
             )

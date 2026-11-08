@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 SCHEMA = """
@@ -18,7 +20,7 @@ CREATE TABLE IF NOT EXISTS jobs(
 CREATE TABLE IF NOT EXISTS idempotency(
   key TEXT PRIMARY KEY, body_hash TEXT NOT NULL, status INTEGER NOT NULL, response TEXT NOT NULL);
 """
-JSON_COLUMNS = ("request", "tfvars", "plan", "handoff", "readiness")
+JSON_COLUMNS = ("request", "tfvars", "plan", "handoff", "readiness", "applied_snapshot")
 
 
 class Store:
@@ -29,10 +31,25 @@ class Store:
         with self.lock:
             self.db.executescript(SCHEMA)
             columns = {r[1] for r in self.db.execute("PRAGMA table_info(environments)")}
+            if "applied_snapshot" not in columns:
+                self.db.execute("ALTER TABLE environments ADD COLUMN applied_snapshot TEXT")
             if "readiness" not in columns:
                 self.db.execute("ALTER TABLE environments ADD COLUMN readiness TEXT")
                 # Old READY meant only apply completion. Never invent an app health result.
                 self.db.execute("UPDATE environments SET status='INFRA_READY' WHERE status='READY'")
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Publish an environment change, its job and retry record together."""
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+            else:
+                self.db.execute("COMMIT")
 
     def _env(self, row) -> dict | None:
         if row is None:
@@ -47,9 +64,9 @@ class Store:
             self.db.execute(
                 "INSERT INTO environments (id,org_id,cloud,template,deploymen"
                 "t_id,status,request,tfvars,"
-                "plan,handoff,error,created_at,updated_at,readiness) VALUES "
+                "plan,handoff,error,created_at,updated_at,readiness,applied_snapshot) VALUES "
                 "(:id,:org_id,:cloud,:template,:deployment_id,:status,:request,:tfvars,"
-                ":plan,:handoff,:error,:created_at,:updated_at,:readiness)",
+                ":plan,:handoff,:error,:created_at,:updated_at,:readiness,:applied_snapshot)",
                 {
                     **env,
                     **{
@@ -93,6 +110,17 @@ class Store:
                     (org_id, cloud, template),
                 ).fetchone()
             )
+
+    def environments_for_owner(self, owner: str, template: str) -> list[dict]:
+        with self.lock:
+            return [
+                self._env(row)
+                for row in self.db.execute(
+                    "SELECT * FROM environments WHERE org_id=? AND template=? "
+                    "ORDER BY created_at DESC LIMIT 100",
+                    (owner, template),
+                )
+            ]
 
     def insert_job(self, job: dict) -> None:
         with self.lock:

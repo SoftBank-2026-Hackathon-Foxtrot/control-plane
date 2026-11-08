@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import hmac
-from dataclasses import dataclass
+from asyncio import Lock
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Annotated
 
@@ -32,6 +33,7 @@ class ApiContext:
     coordinator: WorkloadCoordinator
     workload_token: str
     observation_token: str = ""
+    mutation_lock: Lock = field(default_factory=Lock, compare=False, repr=False)
 
     @property
     def onprem_plans(self) -> OnpremPlans:

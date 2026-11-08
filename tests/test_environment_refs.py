@@ -104,7 +104,6 @@ async def test_incomplete_onprem_refs_stop_before_any_adapter(source: str, targe
     raw["environments"]["aws"]["resources"] = AWS_REFS
     world = World(seed=raw)
     workflow = await world.workflows.create(source_env=source, target_env=target, actor="tester")
-    await world.approve(workflow.id)
     stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
     assert stopped.halt and stopped.halt.code == "ONPREM_TARGET_UNCONFIRMED"
     assert not any(adapter.migrations for adapter in world.adapters.values())
@@ -146,7 +145,6 @@ async def test_onprem_refs_cannot_change_after_preflight_or_restart() -> None:
     world = World(seed=raw)
     workflow = await world.workflows.create(source_env="aws", target_env="onprem", actor="tester")
     world.prober.ready = False
-    await world.approve(workflow.id)
     await world.tick()
     stage = (await world.repo.stages(workflow.id))[0]
     assert stage.data["onpremResourceRefs"]["OBJECT_STORAGE"] == [

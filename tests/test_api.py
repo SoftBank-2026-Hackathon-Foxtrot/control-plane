@@ -11,7 +11,7 @@ import pytest
 
 from control_plane.auth import AuthService, safe_return_path
 from control_plane.config import Settings
-from control_plane.domain.models import ActorState, ResourceKind
+from control_plane.domain.models import ActorState, ResourceKind, WorkflowStatus
 from control_plane.errors import ApiError
 from control_plane.main import create_api
 from tests.conftest import SETTINGS, World
@@ -241,7 +241,7 @@ async def test_changes_need_csrf_token_and_allowed_origin(console: Console) -> N
 async def test_creating_a_workflow_returns_the_whole_picture(console: Console) -> None:
     await console.login()
     detail = await console.create()
-    assert detail["workflow"]["status"] == "PLANNED"
+    assert detail["workflow"]["status"] == "RUNNING"
     assert detail["workflow"]["createdBy"] == "hyunsu"
     assert [stage["kind"] for stage in detail["stages"]] == [
         "PREPARE",
@@ -253,7 +253,7 @@ async def test_creating_a_workflow_returns_the_whole_picture(console: Console) -
         "TRAFFIC",
         "FINALIZE",
     ]
-    assert detail["allowedCommands"] == ["APPROVE", "ABORT"]
+    assert detail["allowedCommands"] == ["HALT"]
     assert detail["hold"]["desired"] == "RUN"
 
 
@@ -498,8 +498,10 @@ async def test_changes_need_an_idempotency_key(console: Console) -> None:
 async def test_commands_check_version_and_state(console: Console, world: World) -> None:
     await console.login()
     created = await console.create()
-    workflow = created["workflow"]
-    url = f"/v1/workflows/{workflow['id']}/commands"
+    workflow_id = created["workflow"]["id"]
+    await world.until(workflow_id, WorkflowStatus.WAITING_APPROVAL)
+    workflow = (await console.http.get(f"/v1/workflows/{workflow_id}")).json()["workflow"]
+    url = f"/v1/workflows/{workflow_id}/commands"
 
     stale = await console.http.post(
         url,
@@ -526,10 +528,29 @@ async def test_commands_check_version_and_state(console: Console, world: World) 
     assert approved.json()["workflow"]["status"] == "RUNNING"
     assert approved.json()["allowedCommands"] == ["HALT"]
 
+    complete = await world.until(workflow_id, WorkflowStatus.CUTOVER_COMPLETE)
+    detail = (await console.http.get(f"/v1/workflows/{workflow_id}")).json()
+    assert detail["allowedCommands"] == ["ROLLBACK", "FINALIZE"]
+    refused = await console.http.post(
+        url,
+        json={"command": "APPROVE", "expectedVersion": complete.version},
+        headers=console.change_headers(),
+    )
+    assert refused.status_code == 409
+    finalized = await console.http.post(
+        url,
+        json={"command": "FINALIZE", "expectedVersion": complete.version},
+        headers=console.change_headers(),
+    )
+    assert finalized.status_code == 200
+    assert finalized.json()["workflow"]["finalizeRequested"]
+
 
 async def test_timeline_records_who_did_what_and_pages(console: Console, world: World) -> None:
     await console.login()
     workflow = (await console.create())["workflow"]
+    current = await world.until(workflow["id"], WorkflowStatus.WAITING_APPROVAL)
+    workflow["version"] = current.version
     await console.http.post(
         f"/v1/workflows/{workflow['id']}/commands",
         json={"command": "APPROVE", "expectedVersion": workflow["version"]},
@@ -539,8 +560,11 @@ async def test_timeline_records_who_did_what_and_pages(console: Console, world: 
         await world.tick()
 
     first = (await console.http.get(f"/v1/workflows/{workflow['id']}/events?limit=2")).json()
-    assert [event["type"] for event in first["events"]] == ["WORKFLOW_CREATED", "APPROVE"]
-    assert first["events"][1]["actor"] == "hyunsu"
+    assert [event["type"] for event in first["events"]] == ["WORKFLOW_CREATED", "STAGE_STARTED"]
+    events = (await console.http.get(f"/v1/workflows/{workflow['id']}/events?limit=100")).json()
+    assert (
+        next(event for event in events["events"] if event["type"] == "APPROVE")["actor"] == "hyunsu"
+    )
     assert first["nextCursor"]
     second = (
         await console.http.get(

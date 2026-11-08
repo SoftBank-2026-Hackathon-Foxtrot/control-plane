@@ -59,15 +59,21 @@ class WorkflowStatus(StrEnum):
     PLANNED = "PLANNED"
     RUNNING = "RUNNING"
     WAITING_APPROVAL = "WAITING_APPROVAL"
+    CUTOVER_COMPLETE = "CUTOVER_COMPLETE"
     HALTED = "HALTED"
     ROLLING_BACK = "ROLLING_BACK"
     ABORTING = "ABORTING"
     COMPLETED = "COMPLETED"
     ABORTED = "ABORTED"
+    ROLLED_BACK = "ROLLED_BACK"
 
     @property
     def terminal(self) -> bool:
-        return self in {WorkflowStatus.COMPLETED, WorkflowStatus.ABORTED}
+        return self in {
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.ABORTED,
+            WorkflowStatus.ROLLED_BACK,
+        }
 
 
 class StageKind(StrEnum):
@@ -105,12 +111,31 @@ class RollbackRequest(Model):
     target_failure_confirmed: bool = False
 
 
+class TargetAppConfiguration(Model):
+    cpu: float | None = Field(default=None, gt=0, allow_inf_nan=False, strict=True)
+    memory_mib: int | None = Field(default=None, gt=0, strict=True, alias="memoryMiB")
+    worker_count: int | None = Field(default=None, ge=1, strict=True)
+    api_workers: int | None = Field(default=None, ge=1, strict=True)
+
+
+class TargetConfiguration(Model):
+    environment_id: str = Field(pattern=r"^env-[a-f0-9]{12}$")
+    expected_updated_at: str = Field(min_length=1, max_length=64)
+    sizing: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    app: TargetAppConfiguration = Field(default_factory=TargetAppConfiguration)
+
+
+class PreparedTargetConfiguration(TargetConfiguration):
+    owner_id: str
+    identity: dict[str, Any]
+
+
 class Workflow(Model):
     id: str
     application: str
     source_env: str
     target_env: str
-    status: WorkflowStatus = WorkflowStatus.PLANNED
+    status: WorkflowStatus = WorkflowStatus.RUNNING
     current_stage: int = 0
     approved_through: int = -1
     version: int = 0
@@ -121,11 +146,15 @@ class Workflow(Model):
     created_by_id: SkipJsonSchema[str | None] = Field(default=None, exclude=True)
     created_at: datetime
     finished_at: datetime | None = None
+    cutover_completed_at: datetime | None = None
+    finalize_requested: bool = False
+    rollback_all: bool = False
     halt: Halt | None = None
     rollback: RollbackRequest | None = None
     reconcile_requested: bool = False
     reconcile_count: int = 0
     rolled_back: list[ResourceKind] = Field(default_factory=list)
+    target_configuration: PreparedTargetConfiguration | None = None
 
 
 class StageState(Model):

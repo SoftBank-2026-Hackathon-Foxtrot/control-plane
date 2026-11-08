@@ -152,7 +152,7 @@ async def test_deploy_for_requested_migration_after_preparing_the_node(registere
     )
     assert requested.status_code == 201, requested.text
     workflow = requested.json()["workflow"]
-    assert workflow["status"] == "PLANNED"
+    assert workflow["status"] == "RUNNING"
     assert workflow["createdBy"] == "hyunsu"
     assert "createdById" not in workflow
     for cloud in ("aws", "gcp"):

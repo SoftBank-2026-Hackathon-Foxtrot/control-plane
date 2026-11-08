@@ -10,6 +10,9 @@ otlp:
     - foxtrot.module
     - application.id
     - deployment.environment.name
+    - foxtrot.owner.id
+    - foxtrot.deployment.id
+    - foxtrot.workload.kind
     - host.name
     - measurement.scope
     - foxtrot.owner.id

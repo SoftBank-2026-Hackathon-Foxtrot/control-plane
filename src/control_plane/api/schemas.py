@@ -15,18 +15,20 @@ from control_plane.domain.models import (
     RedisRoute,
     ResourceKind,
     StageState,
+    TargetConfiguration,
     TrafficRecord,
     User,
     Workflow,
     WorkflowEvent,
 )
-from control_plane.workflows import ALLOWED_COMMANDS
+from control_plane.workflows import commands_for
 
 
 class CreateWorkflow(Model):
     source_env: str
     target_env: str
     resources: dict[ResourceKind, EndpointPair] = Field(default_factory=dict)
+    target_configuration: TargetConfiguration | None = None
 
 
 class InitializeBindings(Model):
@@ -196,7 +198,7 @@ class DirectiveView(Model):
 
 
 def allowed_commands(workflow: Workflow) -> list[str]:
-    return list(ALLOWED_COMMANDS[workflow.status])
+    return list(commands_for(workflow))
 
 
 class PreparationReport(Model):

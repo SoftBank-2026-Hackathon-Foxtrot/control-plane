@@ -137,6 +137,8 @@ async def drive(
             return current
         if current.status in {WorkflowStatus.PLANNED, WorkflowStatus.WAITING_APPROVAL}:
             await world.approve(workflow.id)
+        elif current.status is WorkflowStatus.CUTOVER_COMPLETE:
+            await world.command(workflow.id, "FINALIZE")
         if apps:
             hold = await world.services.coordinator.hold()
             await apps.follow(hold.object_migration_id)

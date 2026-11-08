@@ -45,7 +45,7 @@ class NotFound(Exception):
 
 
 def now() -> str:
-    return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
+    return dt.datetime.now(dt.UTC).isoformat(timespec="microseconds")
 
 
 def admission(function):
@@ -91,6 +91,7 @@ class Service:
             )
         suffix = secrets.token_hex(2)
         tfvars = spec.render(req, self.catalog, self.config, suffix, self.today())
+        self._scope_app_metrics(req, tfvars)
         if req["cloud"] == "onprem":
             for other in self.store.environments():
                 if (
@@ -150,11 +151,46 @@ class Service:
         }
 
     @admission
-    def update(self, env_id: str, body: dict) -> tuple[int, dict]:
-        """Change a READY (or FAILED) environment in place: new app settings, sizing or access.
+    def update(
+        self, env_id: str, body: dict, idempotency_key: str | None = None
+    ) -> tuple[int, dict]:
+        """Update in place; the environment, job and retry result commit together."""
+        digest = hashlib.sha256(
+            json.dumps({"environmentId": env_id, "body": body}, sort_keys=True).encode()
+        ).hexdigest()
+        if idempotency_key:
+            seen = self.store.remembered(idempotency_key)
+            if seen:
+                if seen[0] != digest:
+                    raise Conflict("IDEMPOTENCY_CONFLICT", "update key has a different body")
+                return seen[1], seen[2]
+        env = self._get(env_id)
+        req, tfvars = self.validate_update(env_id, body)
+        with self.store.transaction():
+            self.store.update_environment(
+                env_id,
+                now(),
+                request=req,
+                tfvars=tfvars,
+                status="PLANNING",
+                error=None,
+                readiness={
+                    "infrastructure": {"status": "PENDING"},
+                    "application": {"status": "PENDING"},
+                },
+            )
+            response = {
+                "environmentId": env["id"],
+                "jobId": self._enqueue(env_id, "PLAN_APPLY"),
+                "status": "PLANNING",
+            }
+            if idempotency_key:
+                self.store.remember(idempotency_key, digest, 202, response)
+        return 202, response
 
-        The body takes the same app / sizing / access fields as creation; they are merged into the
-        stored request. Org, cloud, template and target stay. Runtime changes must be explicit."""
+    @admission
+    def validate_update(self, env_id: str, body: dict) -> tuple[dict, dict]:
+        """Use the same checks for workflow admission and the eventual queued update."""
         env = self._get(env_id)
         if env["status"] not in ("READY", "INFRA_READY", "APP_NOT_READY", "FAILED"):
             raise Conflict(
@@ -189,28 +225,13 @@ class Service:
             "access": {**stored["access"], **body.get("access", {})},
         }
         req = spec.parse(merged, self.catalog, self.config)
-        suffix = env["deployment_id"].rsplit("-", 1)[1]  # keep the same resources
+        suffix = env["deployment_id"].rsplit("-", 1)[1]
         tfvars = spec.render(req, self.catalog, self.config, suffix, self.today())
+        self._scope_app_metrics(req, tfvars)
         if req["cloud"] == "aws":
             tfvars["final_snapshot_identifier"] = env["tfvars"]["final_snapshot_identifier"]
-        tfvars["metadata"] = env["tfvars"]["metadata"]  # tags stay as created
-        self.store.update_environment(
-            env_id,
-            now(),
-            request=req,
-            tfvars=tfvars,
-            status="PLANNING",
-            error=None,
-            readiness={
-                "infrastructure": {"status": "PENDING"},
-                "application": {"status": "PENDING"},
-            },
-        )
-        return 202, {
-            "environmentId": env_id,
-            "jobId": self._enqueue(env_id, "PLAN_APPLY"),
-            "status": "PLANNING",
-        }
+        tfvars["metadata"] = env["tfvars"]["metadata"]
+        return req, tfvars
 
     @admission
     def check_app(self, env_id: str) -> tuple[int, dict]:
@@ -283,6 +304,33 @@ class Service:
             "status": "DESTROYING",
         }
 
+    @staticmethod
+    def _scope_app_metrics(req: dict, tfvars: dict) -> None:
+        for field in ("env", "apiEnv", "workerEnv", "secretEnv"):
+            spec.require(
+                "OTEL_RESOURCE_ATTRIBUTES" not in req["app"].get(field, {}),
+                "OTEL_RESOURCE_ATTRIBUTES is supplied by the platform",
+            )
+        application = req["org"].get("name")
+        if not isinstance(application, str) or not re.fullmatch(
+            r"[A-Za-z0-9_.:-]{1,64}", application
+        ):
+            application = req["org"]["id"]
+        attributes = {
+            "application.id": application,
+            "deployment.environment.name": req["cloud"],
+            "foxtrot.owner.id": req["org"]["id"],
+            "foxtrot.deployment.id": tfvars["deployment_id"],
+            "foxtrot.workload.kind": "USER_APPLICATION",
+        }
+        # The app, API and queue worker share this deployment identity. Never inherit platform tags.
+        tfvars["app"]["env"] = {
+            **tfvars["app"].get("env", {}),
+            "OTEL_RESOURCE_ATTRIBUTES": ",".join(
+                f"{key}={value}" for key, value in attributes.items()
+            ),
+        }
+
     def view(self, env: dict) -> dict:
         handoff = env["handoff"] or {}
         return {
@@ -292,6 +340,7 @@ class Service:
             "template": env["template"],
             "workflowId": env["request"].get("workflowId"),
             "sizing": env["tfvars"]["sizing"],
+            "appliedSnapshot": env.get("applied_snapshot"),
             "runtime": {"aws": "ECS_FARGATE", "gcp": "CLOUD_RUN", "onprem": "ON_PREM"}[
                 env["cloud"]
             ],
@@ -449,6 +498,28 @@ class Service:
                     env_id,
                     now(),
                     handoff=handoff,
+                    applied_snapshot={
+                        "sizing": env["tfvars"]["sizing"],
+                        "app": {
+                            key: env["tfvars"].get("app", {})[key]
+                            for key in ("cpu", "memory_mib", "worker_count", "api_workers", "port")
+                            if key in env["tfvars"].get("app", {})
+                        },
+                        "appliedAt": now(),
+                        "jobId": job["id"],
+                        "deploymentId": env["deployment_id"],
+                        "hasTunnelContainer": bool(
+                            env["tfvars"].get("app", {}).get("tunnel_secret")
+                        ),
+                        "resources": {
+                            name: {
+                                key: (handoff.get(name) or {})[key]
+                                for key in ("id", "host", "port", "name", "tls_required")
+                                if key in (handoff.get(name) or {})
+                            }
+                            for name in ("compute", "database", "cache", "storage", "network")
+                        },
+                    },
                     status="INFRA_READY",
                     error=None,
                     readiness={

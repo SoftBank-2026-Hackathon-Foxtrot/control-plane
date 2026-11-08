@@ -73,7 +73,6 @@ async def test_onprem_requires_the_direct_pairs_from_this_request(explicit: bool
         for kind in pairs:
             assert world.adapters[kind].only.plan["target"]["host"] == "onprem-node"
     else:
-        await world.approve(workflow.id)
         stopped = await world.until(workflow.id, WorkflowStatus.HALTED)
         assert stopped.halt and stopped.halt.code == "ONPREM_TARGET_UNCONFIRMED"
         assert not any(adapter.migrations for adapter in world.adapters.values())

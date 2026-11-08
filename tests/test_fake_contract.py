@@ -29,7 +29,6 @@ async def test_status_responses_follow_the_contract_at_every_lifecycle(
     world: World, kind: ResourceKind
 ) -> None:
     workflow = await world.start()
-    await world.approve(workflow.id)
     adapter = world.adapters[kind]
     seen: set[str] = set()
     for _ in range(400):
@@ -45,12 +44,13 @@ async def test_status_responses_follow_the_contract_at_every_lifecycle(
         current = await world.workflow(workflow.id)
         if current.status is WorkflowStatus.WAITING_APPROVAL:
             await world.approve(workflow.id)
+        elif current.status is WorkflowStatus.CUTOVER_COMPLETE:
+            await world.command(workflow.id, "FINALIZE")
     assert {"CREATED", "PREPARED"} & seen or "READY" in seen
 
 
 async def test_operation_responses_follow_the_contract(world: World) -> None:
     workflow = await world.start()
-    await world.approve(workflow.id)
     await world.at_stage(workflow.id, 1)
     for adapter in world.adapters.values():
         operation = next(iter(adapter.operations.values()))

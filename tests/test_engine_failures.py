@@ -32,8 +32,7 @@ async def test_a_restart_between_any_two_ticks_changes_nothing(world: World) -> 
 
 
 async def test_a_new_owner_waits_for_the_old_lease_to_expire(world: World) -> None:
-    workflow = await world.start()
-    await world.approve(workflow.id)
+    await world.start()
     await world.tick()
     before = len(world.object.received)
     from control_plane.engine.engine import Engine
@@ -148,6 +147,8 @@ async def test_a_refusal_remembered_under_a_key_does_not_trap_the_retry(world: W
 async def test_unreachable_adapter_waits_then_stops(world: World) -> None:
     workflow = await world.start()
     await world.at_stage(workflow.id, 2)
+    await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
+    await world.approve(workflow.id)
     world.object.unreachable = True
     final = await world.until(workflow.id, WorkflowStatus.HALTED, limit=1000)
     assert final.halt is not None and final.halt.code == "ADAPTER_UNREACHABLE"
@@ -200,8 +201,7 @@ async def test_a_workload_that_will_not_stop_blocks_the_cutover_and_is_released(
 async def test_a_workload_that_stops_reporting_mid_cutover_blocks_it(world: World) -> None:
     world.db.faults["CUTOVER"] = Fault("STUCK")
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
-    await world.approve(workflow.id)
+    await world.at_stage(workflow.id, REDIS_STAGE)
     for _ in range(600):  # Redis moves first
         await world.tick()
         if "CUTOVER" in [body["action"] for body in world.db.received]:
@@ -264,6 +264,8 @@ async def test_a_refused_weight_change_stops_after_retrying(world: World) -> Non
 async def test_halting_during_a_command_loses_nothing(world: World) -> None:
     workflow = await world.start()
     await world.at_stage(workflow.id, 2)
+    await world.until(workflow.id, WorkflowStatus.WAITING_APPROVAL)
+    await world.approve(workflow.id)
     await world.tick()
     await world.command(workflow.id, "HALT")
     sent = len(world.object.received)
@@ -280,8 +282,7 @@ async def test_halting_during_a_command_loses_nothing(world: World) -> None:
 async def test_resuming_a_long_command_does_not_stop_it_at_once(world: World) -> None:
     world.redis.faults["QUIESCE"] = Fault("STUCK")
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=REDIS_STAGE)
-    await world.approve(workflow.id)
+    await world.at_stage(workflow.id, REDIS_STAGE)
     for _ in range(5):
         await world.tick()
     await world.command(workflow.id, "HALT")
@@ -306,22 +307,24 @@ async def test_object_unknown_with_an_active_operation_is_reconciled(world: Worl
 async def test_running_evidence_continues_until_finalize(world: World) -> None:
     """The DB adapter checks it again at FINALIZE, stages after the database moved."""
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=FINALIZE_STAGE)
+    await world.at_stage(workflow.id, FINALIZE_STAGE)
+    await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
     written = len(world.gate.running)
     for _ in range(120):  # a person takes two minutes to approve
         await world.tick()
     assert len(world.gate.running) >= written + 10
-    await world.approve(workflow.id)
+    await world.command(workflow.id, "FINALIZE")
     assert (await world.run_to_end(workflow.id)).status is WorkflowStatus.COMPLETED
 
 
 async def test_finalize_is_refused_if_the_workload_stopped_reporting(world: World) -> None:
     workflow = await world.start()
-    await world.run_until_approval(workflow.id, stage=FINALIZE_STAGE)
+    await world.at_stage(workflow.id, FINALIZE_STAGE)
+    await world.until(workflow.id, WorkflowStatus.CUTOVER_COMPLETE)
     world.workload.silent = True
     for _ in range(40):
         await world.tick()
-    await world.approve(workflow.id)
+    await world.command(workflow.id, "FINALIZE")
     final = await world.until(workflow.id, WorkflowStatus.HALTED)
     assert final.halt is not None and final.halt.code == "PRECONDITION_FAILED"
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import itertools
 import json
 import secrets
+from collections.abc import Iterable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -119,7 +120,13 @@ class Repository:
         raise VersionConflict(f"binding {application}/{kind.value}")
 
     # ---- workflows ---------------------------------------------------------------------------
-    async def create_workflow(self, workflow: Workflow) -> None:
+    async def create_workflow(
+        self,
+        workflow: Workflow,
+        *,
+        stages: Iterable[StageState] = (),
+        resources: Iterable[ResourceState] = (),
+    ) -> None:
         """Takes the single active slot first, so two requests cannot both start a migration."""
         try:
             await self.table.put(
@@ -130,6 +137,12 @@ class Repository:
             if active is None:  # finished between the write and the read
                 raise
             raise ActiveWorkflowExists(active) from None
+        # Publish RUNNING only after its immutable inputs are saved. An engine tick during the
+        # request must never start PREPARE against a half-initialized resource plan.
+        for stage in stages:
+            await self.save_stage(workflow.id, stage)
+        for resource in resources:
+            await self.save_resource(workflow.id, resource)
         await self.table.put(
             f"WORKFLOW#{workflow.id}", META, _dump_workflow(workflow), expected_version=0
         )

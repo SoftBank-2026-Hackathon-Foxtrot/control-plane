@@ -82,7 +82,6 @@ def stage_index(kind: StageKind) -> int:
 
 CANARY_STAGE = stage_index(StageKind.CANARY)
 REDIS_STAGE = stage_index(StageKind.REDIS_CUTOVER)
-"""Also where the one approval for the Redis and DB cutovers is asked."""
 DB_STAGE = stage_index(StageKind.DATABASE_CUTOVER)
 TRAFFIC_STAGE = stage_index(StageKind.TRAFFIC)
 FINALIZE_STAGE = stage_index(StageKind.FINALIZE)
@@ -242,6 +241,8 @@ class World:
                 return workflow
             if workflow.status in {WorkflowStatus.PLANNED, WorkflowStatus.WAITING_APPROVAL}:
                 await self.approve(workflow_id)
+            elif workflow.status is WorkflowStatus.CUTOVER_COMPLETE:
+                await self.command(workflow_id, "FINALIZE")
             await self.tick()
         raise AssertionError(f"not finished: {workflow.status} at {workflow.current_stage}")
 
